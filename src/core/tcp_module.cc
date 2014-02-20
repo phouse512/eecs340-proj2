@@ -80,27 +80,50 @@ int main(int argc, char *argv[])
 
 void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<TCPState> &clist) {
 
-  //declare variables
+  /* VARIABLES */
+  //packet and headers
   Packet p;
-  unsigned short len;
+  TCPHeader tcph;
+  IPHeader iph;
+  unsigned tcphlen;
+  unsigned iphlen;
+
+  //packet properties
+  unsigned short total_len;
   bool checksumok;
   unsigned char flags; //to hold syn, fin, rst, psh flags of packet p
+  unsigned int seqnum;
+
+
+  /* BEGIN */
 
   //grab packet from ip
   MinetReceive(mux,p);
 
-  //pop off header
-  p.ExtractHeaderFromPayload<TCPHeader>(8);
+  //get header length estimates
+  unsigned tcphlen=TCPHeader::EstimateTCPHeaderLength(p);
+  unsigned iphlen=IPHeader::EstimateIPHeaderLength(p);
+
+  //extract headers...
+  p.ExtractHeaderFromPayload<TCPHeader>(tcphlen);
 
   //store headers in tcph and iph
-  TCPHeader tcph;
   tcph=p.FindHeader(Headers::TCPHeader);
-  checksumok=tcph.IsCorrectChecksum(p);
-  IPHeader iph;
   iph=p.FindHeader(Headers::IPHeader);
+
+  //check if checksum is correct 
+  checksumok=tcph.IsCorrectChecksum(p);
+
+  //CONFUSED
+  // //length of headers
+  // iph.GetTotalLength(total_len); //total length including ip header
+  // seg_len = total_len - iphlen; //segment length including tcp header
+  // data_len = seg_len - tcphlen; //actual data length
+  // Buffer data = p.GetPayload().ExtractFront(data_len);
 
   //fill out a blank reference connection object
   Connection c;
+
   // note that this is flipped around because
   // "source" is interepreted as "this machine"
 
@@ -113,6 +136,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   tcph.GetDestPort(c.srcport);
   tcph.GetSourcePort(c.destport);
   tcph.GetFlags(flags);
+  tcph.GetSeqNum(seqnum);
 
   //find ConnectionToStateMapping in list
   ConnectionList<TCPState>::iterator cs = clist.FindMatching(c);
@@ -131,16 +155,61 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
       case LISTEN:
         cout << "listening wheee" << endl;
 
-        //if receives a SYN flag
+        //if SYN bit is set
         if(IS_SYN(flags)){
 
-          //set state to SYN_RCVD
-          (*cs).state.SetState(SYN_RCVD);
+          /*NOTE THAT WE ARE DOING STOP AND WAIT ATM. 
+          COMMENTED OUT SET COMMANDS ARE FOR GBN */
 
-          //make return packet with syn_ack
+          /* MAKE SYNACK PACKET */
+          Packet ret_p;
+
+          /* MAKE IP HEADER */
+          IPHeader ret_iph;
+
+          ret_iph.SetProtocol(IP_PROTO_TCP);
+          ret_iph.SetSourceIP(*cs.connection.src);
+          ret_iph.SetDestIP(*cs.connection.dest);
+          ret_iph.SetTotalLength(TCP_HEADER_LENGTH+IP_HEADER_BASE_LENGTH);
+          // push it onto the packet
+          ret_p.PushFrontHeader(ret_iph);
+
+          /*MAKE TCP HEADER*/
+          //variables
+          TCPHeader ret_tcph;
+          unsigned int my_seqnum = 0; //hardcoded atm, should be random
+          unsigned char my_flags;
+
+          ret_tcph.SetSourcePort(*cs.srcport, ret_p);
+          ret_tcph.SetDestPort(*cs.destport, ret_p);
+          ret_tcph.SetSeqNum(my_seqnum, ret_p);
+          ret_tcph.SetAckNum(seqnum+1, ret_p); //set to isn+1
+
+          //set flags
+          SET_SYN(my_flags);
+          ret_tcph.SetFlags(my_flags, ret_p);
+
+          ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH, ret_p);
+          // ret_tcph.SetWinSize(0, ret_p);
+          // ret_tcph.SetUrgentPtr(0, ret_p);
+          // ret_tcph.SetOptions(0, ret_p);
+
+          //recompute checksum with headers in
+          ret_tcph.RecomputeChecksum(ret_p);
+
+          //make sure ip header is in front
+          ret_p.PushBackHeader(ret_tcph);
+
+          //update state
+          (*cs).state.SetState(SYN_RCVD);
+          //(*cs).state.SetTimerTries(SYN_RCVD);
+          //(*cs).state.SetLastAcked(SYN_RCVD);
+          (*cs).state.SetLastSent(my_seqnum);
+          //(*cs).state.SetSendRwnd(SYN_RCVD);
+          (*cs).state.SetLastRecvd(seqnum);
 
           //use minetSend for above packet and mux
-
+          MinetSend(mux, ret_p);
         }
 
         break;
