@@ -88,8 +88,10 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   unsigned tcphlen;
   unsigned iphlen;
 
-  //packet properties
-  unsigned short total_len;
+  //received packet properties
+  unsigned short total_len; //length of packet w/ headers
+  unsigned short data_len; //length of data
+  Buffer data;  
   bool checksumok;
   unsigned char flags; //to hold syn, fin, rst, psh flags of packet p
   unsigned int seqnum;
@@ -106,6 +108,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
   //extract headers...
   p.ExtractHeaderFromPayload<TCPHeader>(tcphlen);
+  p.ExtractHeaderFromPayload<IPHeader>(iphlen);
 
   //store headers in tcph and iph
   tcph=p.FindHeader(Headers::TCPHeader);
@@ -114,12 +117,12 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   //check if checksum is correct 
   checksumok=tcph.IsCorrectChecksum(p);
 
-  //CONFUSED
-  // //length of headers
-  // iph.GetTotalLength(total_len); //total length including ip header
-  // seg_len = total_len - iphlen; //segment length including tcp header
-  // data_len = seg_len - tcphlen; //actual data length
-  // Buffer data = p.GetPayload().ExtractFront(data_len);
+  //length of headers
+  iph.GetTotalLength(total_len); //total length including ip header
+  data_len = total_len - iphlen - tcphlen; //actual data length
+  
+  //get data
+  data = p.GetPayload().ExtractFront(data_len);
 
   //fill out a blank reference connection object
   Connection c;
@@ -137,6 +140,10 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   tcph.GetSourcePort(c.destport);
   tcph.GetFlags(flags);
   tcph.GetSeqNum(seqnum);
+  // tcph.GetAckNum();
+  // tcph.GetWinSize();
+  // tcph.GetUrgentPtr();
+  // tcph.GetOptions();
 
   //find ConnectionToStateMapping in list
   ConnectionList<TCPState>::iterator cs = clist.FindMatching(c);
