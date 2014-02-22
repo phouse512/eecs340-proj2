@@ -140,7 +140,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   tcph.GetSourcePort(c.destport);
   tcph.GetFlags(flags);
   tcph.GetSeqNum(seqnum);
-  // tcph.GetAckNum();
+  tcph.GetAckNum();
   // tcph.GetWinSize();
   // tcph.GetUrgentPtr();
   // tcph.GetOptions();
@@ -151,7 +151,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   //fetch state from the ConnectionToStateMapping
   unsigned int state = (*cs).state.GetState()
 
-  if (cs!=clist.end()) {
+  if (cs!=clist.end() && checksumok) {
     
     switch(state) {
 
@@ -175,8 +175,8 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           IPHeader ret_iph;
 
           ret_iph.SetProtocol(IP_PROTO_TCP);
-          ret_iph.SetSourceIP(*cs.connection.src);
-          ret_iph.SetDestIP(*cs.connection.dest);
+          ret_iph.SetSourceIP((*cs).connection.src);
+          ret_iph.SetDestIP((*cs).connection.dest);
           ret_iph.SetTotalLength(TCP_HEADER_LENGTH+IP_HEADER_BASE_LENGTH);
           // push it onto the packet
           ret_p.PushFrontHeader(ret_iph);
@@ -187,13 +187,14 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           unsigned int my_seqnum = 0; //hardcoded atm, should be random
           unsigned char my_flags;
 
-          ret_tcph.SetSourcePort(*cs.srcport, ret_p);
-          ret_tcph.SetDestPort(*cs.destport, ret_p);
+          ret_tcph.SetSourcePort((*cs).srcport, ret_p);
+          ret_tcph.SetDestPort((*cs).destport, ret_p);
           ret_tcph.SetSeqNum(my_seqnum, ret_p);
           ret_tcph.SetAckNum(seqnum+1, ret_p); //set to isn+1
 
           //set flags
           SET_SYN(my_flags);
+          SET_ACK(my_flags);
           ret_tcph.SetFlags(my_flags, ret_p);
 
           ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH, ret_p);
@@ -207,13 +208,16 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           //make sure ip header is in front
           ret_p.PushBackHeader(ret_tcph);
 
+          /* end header */
+
           //update state
+          //need to update state after every state
           (*cs).state.SetState(SYN_RCVD);
           //(*cs).state.SetTimerTries(SYN_RCVD);
           //(*cs).state.SetLastAcked(SYN_RCVD);
           (*cs).state.SetLastSent(my_seqnum);
           //(*cs).state.SetSendRwnd(SYN_RCVD);
-          (*cs).state.SetLastRecvd(seqnum);
+          (*cs).state.SetLastRecvd(seqnum, 0); //no data in syn packet
 
           //use minetSend for above packet and mux
           MinetSend(mux, ret_p);
@@ -222,6 +226,34 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         break;
 
       case SYN_RCVD:
+        // Necessary conditions to move into ESTABLISHED: 
+        // SYN bit not set, ACK bit set, seqnum == client_isn+1, ack == server_isn+1
+
+        if(IS_SYN(flags)==false 
+          && IS_ACK(flags)==true
+          && seqnum==(*cs).state.GetLastRecvd()+1 
+          && acknum==(*cs).state.GetLastSent()+1) {
+
+          /* FORWARD DATA TO SOCKET */
+          SockRequestResponse response;
+          response.type = WRITE;
+          response.connection = c;
+          response.data = data;
+          response.bytes = data_len; 
+          MinetSend(sock, response);
+
+          /* ACK PACKET - IMPLEMENT AFTER TIMERS ARE IN? */
+
+          //update state
+          (*cs).state.SetState(ESTABLISHED);
+          //(*cs).state.SetTimerTries(SYN_RCVD);
+          (*cs).state.SetLastAcked(acknum-1);
+          //(*cs).state.SetLastSent(my_seqnum);
+          //(*cs).state.SetSendRwnd(SYN_RCVD);
+          (*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
+
+
+        }
 
         break;
 
@@ -235,6 +267,30 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
       case ESTABLISHED:
         cout << "current state: established" << endl;
+
+        /* FORWARD DATA TO SOCKET */
+        SockRequestResponse response;
+        response.type = WRITE;
+        response.connection = c;
+        response.data = data;
+        response.bytes = data_len; 
+        MinetSend(sock, response);
+
+        /* ACK PACKET - IMPLEMENT AFTER TIMERS ARE IN? */
+
+        //update state
+        //(*cs).state.SetState(ESTABLISHED);
+        //(*cs).state.SetTimerTries(SYN_RCVD);
+        if(IS_ACK(flags)){
+          (*cs).state.SetLastAcked(acknum-1);
+        }
+        //(*cs).state.SetLastSent(my_seqnum);
+        //(*cs).state.SetSendRwnd(SYN_RCVD);
+        (*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
+
+
+        }
+
         break;
 
       case SEND_DATA:
@@ -272,3 +328,67 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
 
 }//muxhandler
+
+
+void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<TCPState> &clist) {
+
+    //grab request from socket
+    SockRequestResponse request;
+    MinetReceive(sock, request);
+
+    //switch based on what socket wants to do
+    switch(request.type){
+
+      case CONNECT:
+
+        break;
+
+      case ACCEPT:
+
+        /* ADD A NEW ACCEPT CONNECTION */
+
+        // first initialize the ConnectionToStateMapping
+        ConnectionToStateMapping<TCPState> new_cs;
+
+        //Create a new accept connection - will start at LISTEN
+
+        //the new connection is what's specified by the request from the socket
+        new_cs.connection = s.connection;
+
+        //generate new state
+        //implement timertries eventually, right now set to 1?
+        unsigned int timertries = 1;
+        TCPState accept_c = TCPState(rand(), LISTEN, timertries);
+        
+        //fill out state of ConnectionToStateMapping
+        new_cs.state = accept_c;
+
+        //add new ConnectionToStateMapping to list
+        clist.push_front(new_cs);
+
+        //send a STATUS to the socket with only error code set
+        SockRequestResponse response;
+        response.type = STATUS;
+        response.error = EOK;
+        MinetSend(sock, response);        
+
+        break;
+
+      case WRITE:
+
+        break;
+
+      case FORWARD:
+
+        break;
+
+      case CLOSE:
+
+        break;
+
+      case STATUS:
+
+        break;
+
+    }//switch
+}//sockhandler
