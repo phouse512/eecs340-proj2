@@ -25,6 +25,9 @@ int main(int argc, char *argv[])
 {
   MinetHandle mux, sock;
 
+  ConnectionList<TCPState> clist;
+
+
   MinetInit(MINET_TCP_MODULE);
 
   mux=MinetIsModuleInConfig(MINET_IP_MUX) ? MinetConnect(MINET_IP_MUX) : MINET_NOHANDLE;
@@ -53,25 +56,11 @@ int main(int argc, char *argv[])
     } else {
       //  Data from the IP layer below  //
       if (event.handle==mux) {
-      	Packet p;
-      	MinetReceive(mux,p);
-      	unsigned tcphlen=TCPHeader::EstimateTCPHeaderLength(p);
-      	cerr << "estimated header len="<<tcphlen<<"\n";
-      	p.ExtractHeaderFromPayload<TCPHeader>(tcphlen);
-      	IPHeader ipl=p.FindHeader(Headers::IPHeader);
-      	TCPHeader tcph=p.FindHeader(Headers::TCPHeader);
-
-      	cerr << "TCP Packet: IP Header is "<<ipl<<" and ";
-      	cerr << "TCP Header is "<<tcph << " and ";
-
-      	cerr << "Checksum is " << (tcph.IsCorrectChecksum(p) ? "VALID" : "INVALID");
-      	
+      	MuxHandler(mux, sock, clist);
       }
       //  Data from the Sockets layer above  //
       if (event.handle==sock) {
-        SockRequestResponse s;
-        MinetReceive(sock,s);
-        cerr << "Received Socket Request:" << s << endl;
+        SockHandler(mux, sock, clist);
       }
     }
   }
@@ -166,58 +155,19 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         if(IS_SYN(flags)){
 
           /*NOTE THAT WE ARE DOING STOP AND WAIT ATM. 
-          COMMENTED OUT SET COMMANDS ARE FOR GBN */
-
-          /* MAKE SYNACK PACKET */
-          Packet ret_p;
-
-          /* MAKE IP HEADER */
-          IPHeader ret_iph;
-
-          ret_iph.SetProtocol(IP_PROTO_TCP);
-          ret_iph.SetSourceIP((*cs).connection.src);
-          ret_iph.SetDestIP((*cs).connection.dest);
-          ret_iph.SetTotalLength(TCP_HEADER_LENGTH+IP_HEADER_BASE_LENGTH);
-          // push it onto the packet
-          ret_p.PushFrontHeader(ret_iph);
-
-          /*MAKE TCP HEADER*/
-          //variables
-          TCPHeader ret_tcph;
-          unsigned int my_seqnum = 0; //hardcoded atm, should be random
-          unsigned char my_flags;
-
-          ret_tcph.SetSourcePort((*cs).srcport, ret_p);
-          ret_tcph.SetDestPort((*cs).destport, ret_p);
-          ret_tcph.SetSeqNum(my_seqnum, ret_p);
-          ret_tcph.SetAckNum(seqnum+1, ret_p); //set to isn+1
-
-          //set flags
-          SET_SYN(my_flags);
-          SET_ACK(my_flags);
-          ret_tcph.SetFlags(my_flags, ret_p);
-
-          ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH, ret_p);
-          // ret_tcph.SetWinSize(0, ret_p);
-          // ret_tcph.SetUrgentPtr(0, ret_p);
-          // ret_tcph.SetOptions(0, ret_p);
-
-          //recompute checksum with headers in
-          ret_tcph.RecomputeChecksum(ret_p);
-
-          //make sure ip header is in front
-          ret_p.PushBackHeader(ret_tcph);
-
-          /* end header */
+          COMMENTED OUT SET COMMANDS ARE FOR GBN */          
 
           //update state
           //need to update state after every state
           (*cs).state.SetState(SYN_RCVD);
           //(*cs).state.SetTimerTries(SYN_RCVD);
           //(*cs).state.SetLastAcked(SYN_RCVD);
-          (*cs).state.SetLastSent(my_seqnum);
+          (*cs).state.SetLastSent(rand());
           //(*cs).state.SetSendRwnd(SYN_RCVD);
           (*cs).state.SetLastRecvd(seqnum, 0); //no data in syn packet
+
+          //make return packet
+          Packet ret_p = MakePacket(*cs, SEND_SYNACK, 0);
 
           //use minetSend for above packet and mux
           MinetSend(mux, ret_p);
@@ -258,10 +208,6 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         break;
 
       case SYN_SENT:
-
-        break;
-
-      case SYN_SENT1:
 
         break;
 
@@ -341,6 +287,43 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 
       case CONNECT:
 
+        /* ADD A NEW CONNECT CONNECTION */
+
+        // first initialize the ConnectionToStateMapping
+        ConnectionToStateMapping<TCPState> new_cs;
+
+        //Create a new accept connection - will start at SYN_sent
+
+        //the new connection is what's specified by the request from the socket
+        new_cs.connection = s.connection;
+
+        //generate new state
+        //implement timertries eventually, right now set to 1?
+        unsigned int timertries = 1;
+        unsigned int initial_seq_num = rand();
+        TCPState accept_c = TCPState(initial_seq_num, SYN_SENT, timertries);
+        
+        //fill out state of ConnectionToStateMapping
+        new_cs.state = accept_c;
+
+        //set state
+        (*cs).state.SetLastSent(initial_seq_num);
+        //(*cs).state.SetSendRwnd(SYN_RCVD);
+
+
+        //add new ConnectionToStateMapping to list
+        clist.push_front(new_cs);
+
+        //send SYN packet
+        Packet ret_p = MakePacket(new_cs, SEND_SYN, 0);
+        MinetSend(mux, ret_p);
+
+        //send a STATUS to the socket with only error code set
+        SockRequestResponse response;
+        response.type = STATUS;
+        response.error = EOK;
+        MinetSend(sock, response);    
+
         break;
 
       case ACCEPT:
@@ -392,3 +375,100 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 
     }//switch
 }//sockhandler
+
+/* THIS FUNCTION ASSSUMES STATE HAS ALREADY BEEN UPDATED */
+Packet MakePacket(ConnectionToStateMapping cs, unsigned int cmd, unsigned short data_len) {
+    /* MAKE PACKET */
+  Packet ret_p;
+
+  /* MAKE IP HEADER */
+  IPHeader ret_iph;
+
+  ret_iph.SetProtocol(IP_PROTO_TCP);
+  ret_iph.SetSourceIP(cs.connection.src);
+  ret_iph.SetDestIP(cs.connection.dest);
+  ret_iph.SetTotalLength(TCP_HEADER_LENGTH+IP_HEADER_BASE_LENGTH+data_len);
+  // push it onto the packet
+  ret_p.PushFrontHeader(ret_iph);
+
+  /*MAKE TCP HEADER*/
+  TCPHeader ret_tcph;
+
+  //common settings
+  ret_tcph.SetSourcePort(cs.connection.srcport, ret_p);
+  ret_tcph.SetDestPort(cs.connection.destport, ret_p);
+  ret_tcph.SetSeqNum(cs.GetLastSent, ret_p);
+
+  //flags and non-common settings
+  unsigned char my_flags;
+  switch(cs.state.GetState()) {
+
+    case SEND_SYN:
+      SET_SYN(my_flags);
+      ret_tcph.SetFlags(my_flags, ret_p);
+      break;
+
+    case SEND_SYNACK:
+      ret_tcph.SetAckNum(cs.state.GetLastRecvd+1, ret_p); 
+
+      SET_SYN(my_flags);
+      SET_ACK(my_flags);
+      ret_tcph.SetFlags(my_flags, ret_p);
+      break;
+  }
+
+  ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH, ret_p);
+  // ret_tcph.SetWinSize(0, ret_p);
+  // ret_tcph.SetUrgentPtr(0, ret_p);
+  // ret_tcph.SetOptions(0, ret_p);
+
+  //recompute checksum with headers in
+  ret_tcph.RecomputeChecksum(ret_p);
+
+  //make sure ip header is in front
+  ret_p.PushBackHeader(ret_tcph);
+
+  return ret_p;
+}
+
+// /* MAKE SYNACK PACKET */
+//           Packet ret_p;
+
+//           /* MAKE IP HEADER */
+//           IPHeader ret_iph;
+
+//           ret_iph.SetProtocol(IP_PROTO_TCP);
+//           ret_iph.SetSourceIP((*cs).connection.src);
+//           ret_iph.SetDestIP((*cs).connection.dest);
+//           ret_iph.SetTotalLength(TCP_HEADER_LENGTH+IP_HEADER_BASE_LENGTH);
+//           // push it onto the packet
+//           ret_p.PushFrontHeader(ret_iph);
+
+//           /*MAKE TCP HEADER*/
+//           //variables
+//           TCPHeader ret_tcph;
+//           unsigned int my_seqnum = rand(); 
+//           unsigned char my_flags;
+
+//           ret_tcph.SetSourcePort((*cs).srcport, ret_p);
+//           ret_tcph.SetDestPort((*cs).destport, ret_p);
+//           ret_tcph.SetSeqNum(my_seqnum, ret_p);
+//           ret_tcph.SetAckNum(seqnum+1, ret_p); //set to isn+1
+
+//           //set flags
+//           SET_SYN(my_flags);
+//           SET_ACK(my_flags);
+//           ret_tcph.SetFlags(my_flags, ret_p);
+
+//           ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH, ret_p);
+//           // ret_tcph.SetWinSize(0, ret_p);
+//           // ret_tcph.SetUrgentPtr(0, ret_p);
+//           // ret_tcph.SetOptions(0, ret_p);
+
+//           //recompute checksum with headers in
+//           ret_tcph.RecomputeChecksum(ret_p);
+
+//           //make sure ip header is in front
+//           ret_p.PushBackHeader(ret_tcph);
+
+//           /* end header */
