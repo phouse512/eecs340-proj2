@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include "tcpstate.h"
 
 
 #include <iostream>
@@ -20,6 +21,13 @@ using std::cout;
 using std::endl;
 using std::cerr;
 using std::string;
+
+void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<TCPState> &clist);
+void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<TCPState> &clist);
+Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsigned short data_len);
+
+#define SEND_SYNACK 1
+#define SEND_SYN 2
 
 int main(int argc, char *argv[])
 {
@@ -84,6 +92,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   bool checksumok;
   unsigned char flags; //to hold syn, fin, rst, psh flags of packet p
   unsigned int seqnum;
+  unsigned int acknum;
 
 
   /* BEGIN */
@@ -92,8 +101,8 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   MinetReceive(mux,p);
 
   //get header length estimates
-  unsigned tcphlen=TCPHeader::EstimateTCPHeaderLength(p);
-  unsigned iphlen=IPHeader::EstimateIPHeaderLength(p);
+  tcphlen=TCPHeader::EstimateTCPHeaderLength(p);
+  iphlen=IPHeader::EstimateIPHeaderLength(p);
 
   //extract headers...
   p.ExtractHeaderFromPayload<TCPHeader>(tcphlen);
@@ -129,7 +138,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   tcph.GetSourcePort(c.destport);
   tcph.GetFlags(flags);
   tcph.GetSeqNum(seqnum);
-  tcph.GetAckNum();
+  tcph.GetAckNum(acknum);
   // tcph.GetWinSize();
   // tcph.GetUrgentPtr();
   // tcph.GetOptions();
@@ -138,14 +147,15 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   ConnectionList<TCPState>::iterator cs = clist.FindMatching(c);
 
   //fetch state from the ConnectionToStateMapping
-  unsigned int state = (*cs).state.GetState()
+  unsigned int state = (*cs).state.GetState();
 
   if (cs!=clist.end() && checksumok) {
-    
+    SockRequestResponse response;
+    Packet ret_p;
     switch(state) {
 
       case CLOSED:
-
+        cout << "currently closed :(" << endl;
         break;
 
       case LISTEN:
@@ -167,7 +177,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           (*cs).state.SetLastRecvd(seqnum, 0); //no data in syn packet
 
           //make return packet
-          Packet ret_p = MakePacket(*cs, SEND_SYNACK, 0);
+          ret_p = MakePacket(*cs, SEND_SYNACK, 0);
 
           //use minetSend for above packet and mux
           MinetSend(mux, ret_p);
@@ -178,14 +188,14 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
       case SYN_RCVD:
         // Necessary conditions to move into ESTABLISHED: 
         // SYN bit not set, ACK bit set, seqnum == client_isn+1, ack == server_isn+1
-
-        if(IS_SYN(flags)==false 
-          && IS_ACK(flags)==true
-          && seqnum==(*cs).state.GetLastRecvd()+1 
-          && acknum==(*cs).state.GetLastSent()+1) {
+        cout << "currently in syn_rcvd" << endl;
+        // if(IS_SYN(flags)==false 
+        //   && IS_ACK(flags)==true
+        //   && seqnum==(*cs).state.GetLastRecvd()+1 
+        //   && acknum==(*cs).state.GetLastSent()+1) {
 
           /* FORWARD DATA TO SOCKET */
-          SockRequestResponse response;
+          cout << "inside the logic" << endl;
           response.type = WRITE;
           response.connection = c;
           response.data = data;
@@ -203,19 +213,18 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           (*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
 
 
-        }
+       // }
 
         break;
 
       case SYN_SENT:
-
+        cout << "currently at syn_sent" << endl;
         break;
 
       case ESTABLISHED:
         cout << "current state: established" << endl;
 
         /* FORWARD DATA TO SOCKET */
-        SockRequestResponse response;
         response.type = WRITE;
         response.connection = c;
         response.data = data;
@@ -233,9 +242,6 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         //(*cs).state.SetLastSent(my_seqnum);
         //(*cs).state.SetSendRwnd(SYN_RCVD);
         (*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
-
-
-        }
 
         break;
 
@@ -281,33 +287,42 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
     //grab request from socket
     SockRequestResponse request;
     MinetReceive(sock, request);
+    SockRequestResponse response;
+    ConnectionToStateMapping<TCPState> new_cs;
+    unsigned int timertries;
+    unsigned int initial_seq_num;
+    TCPState accept_c;
+    Packet ret_p;
+
+    //ConnectionList<TCPState>::iterator cs = clist.FindMatching(c);
+
 
     //switch based on what socket wants to do
     switch(request.type){
 
       case CONNECT:
-
+        cout << "attempting to add a new connection :(" << endl;
         /* ADD A NEW CONNECT CONNECTION */
 
         // first initialize the ConnectionToStateMapping
-        ConnectionToStateMapping<TCPState> new_cs;
+
 
         //Create a new accept connection - will start at SYN_sent
 
         //the new connection is what's specified by the request from the socket
-        new_cs.connection = s.connection;
+        new_cs.connection = request.connection;
 
         //generate new state
         //implement timertries eventually, right now set to 1?
-        unsigned int timertries = 1;
-        unsigned int initial_seq_num = rand();
-        TCPState accept_c = TCPState(initial_seq_num, SYN_SENT, timertries);
+        timertries = 1;
+        initial_seq_num = rand();
+        accept_c = TCPState(initial_seq_num, SYN_SENT, timertries);
         
         //fill out state of ConnectionToStateMapping
         new_cs.state = accept_c;
 
         //set state
-        (*cs).state.SetLastSent(initial_seq_num);
+        new_cs.state.SetLastSent(initial_seq_num);
         //(*cs).state.SetSendRwnd(SYN_RCVD);
 
 
@@ -315,11 +330,11 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
         clist.push_front(new_cs);
 
         //send SYN packet
-        Packet ret_p = MakePacket(new_cs, SEND_SYN, 0);
+        ret_p = MakePacket(new_cs, SEND_SYN, 0);
         MinetSend(mux, ret_p);
 
         //send a STATUS to the socket with only error code set
-        SockRequestResponse response;
+
         response.type = STATUS;
         response.error = EOK;
         MinetSend(sock, response);    
@@ -327,33 +342,34 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
         break;
 
       case ACCEPT:
-
+        cout << "accepting a new connection :D" << endl;
         /* ADD A NEW ACCEPT CONNECTION */
 
         // first initialize the ConnectionToStateMapping
-        ConnectionToStateMapping<TCPState> new_cs;
 
         //Create a new accept connection - will start at LISTEN
 
         //the new connection is what's specified by the request from the socket
-        new_cs.connection = s.connection;
+        new_cs.connection = request.connection;
 
         //generate new state
         //implement timertries eventually, right now set to 1?
-        unsigned int timertries = 1;
-        TCPState accept_c = TCPState(rand(), LISTEN, timertries);
+        timertries = 1;
+        accept_c = TCPState(rand(), LISTEN, timertries);
         
         //fill out state of ConnectionToStateMapping
         new_cs.state = accept_c;
+        cout << "attempting to push :(" << endl;
 
         //add new ConnectionToStateMapping to list
         clist.push_front(new_cs);
+        cout << "pushed? :(" << endl;
 
         //send a STATUS to the socket with only error code set
-        SockRequestResponse response;
         response.type = STATUS;
         response.error = EOK;
         MinetSend(sock, response);        
+        cout << "exit accept:(" << endl;
 
         break;
 
@@ -377,7 +393,7 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 }//sockhandler
 
 /* THIS FUNCTION ASSSUMES STATE HAS ALREADY BEEN UPDATED */
-Packet MakePacket(ConnectionToStateMapping cs, unsigned int cmd, unsigned short data_len) {
+Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsigned short data_len) {
     /* MAKE PACKET */
   Packet ret_p;
 
@@ -387,7 +403,7 @@ Packet MakePacket(ConnectionToStateMapping cs, unsigned int cmd, unsigned short 
   ret_iph.SetProtocol(IP_PROTO_TCP);
   ret_iph.SetSourceIP(cs.connection.src);
   ret_iph.SetDestIP(cs.connection.dest);
-  ret_iph.SetTotalLength(TCP_HEADER_LENGTH+IP_HEADER_BASE_LENGTH+data_len);
+  ret_iph.SetTotalLength(TCP_HEADER_BASE_LENGTH+IP_HEADER_BASE_LENGTH+data_len);
   // push it onto the packet
   ret_p.PushFrontHeader(ret_iph);
 
@@ -397,7 +413,7 @@ Packet MakePacket(ConnectionToStateMapping cs, unsigned int cmd, unsigned short 
   //common settings
   ret_tcph.SetSourcePort(cs.connection.srcport, ret_p);
   ret_tcph.SetDestPort(cs.connection.destport, ret_p);
-  ret_tcph.SetSeqNum(cs.GetLastSent, ret_p);
+  ret_tcph.SetSeqNum(cs.state.GetLastSent(), ret_p);
 
   //flags and non-common settings
   unsigned char my_flags;
@@ -409,7 +425,7 @@ Packet MakePacket(ConnectionToStateMapping cs, unsigned int cmd, unsigned short 
       break;
 
     case SEND_SYNACK:
-      ret_tcph.SetAckNum(cs.state.GetLastRecvd+1, ret_p); 
+      ret_tcph.SetAckNum(cs.state.GetLastRecvd()+1, ret_p); 
 
       SET_SYN(my_flags);
       SET_ACK(my_flags);
