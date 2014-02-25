@@ -26,6 +26,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<TCPState> &clist);
 Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsigned short data_len);
 
+//for the making of packets
 #define SEND_SYNACK 1
 #define SEND_SYN 2
 
@@ -284,18 +285,19 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
 void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<TCPState> &clist) {
 
-    //grab request from socket
+    //variables
     SockRequestResponse request;
-    MinetReceive(sock, request);
     SockRequestResponse response;
     ConnectionToStateMapping<TCPState> new_cs;
     unsigned int timertries;
     unsigned int initial_seq_num;
-    TCPState accept_c;
+    TCPState accept_c; //the new state we add to the list
     Packet ret_p;
 
-    //ConnectionList<TCPState>::iterator cs = clist.FindMatching(c);
+    //grab request from socket
+    MinetReceive(sock, request);
 
+    //ConnectionList<TCPState>::iterator cs = clist.FindMatching(c);
 
     //switch based on what socket wants to do
     switch(request.type){
@@ -305,10 +307,7 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
         /* ADD A NEW CONNECT CONNECTION */
 
         // first initialize the ConnectionToStateMapping
-
-
         //Create a new accept connection - will start at SYN_sent
-
         //the new connection is what's specified by the request from the socket
         new_cs.connection = request.connection;
 
@@ -346,9 +345,7 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
         /* ADD A NEW ACCEPT CONNECTION */
 
         // first initialize the ConnectionToStateMapping
-
         //Create a new accept connection - will start at LISTEN
-
         //the new connection is what's specified by the request from the socket
         new_cs.connection = request.connection;
 
