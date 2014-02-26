@@ -178,7 +178,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           (*cs).state.SetState(SYN_RCVD);
           //(*cs).state.SetTimerTries(SYN_RCVD);
           //(*cs).state.SetLastAcked(SYN_RCVD);
-          (*cs).state.SetLastSent(my_seqnum);
+          (*cs).state.SetLastSent(rand());
           //(*cs).state.SetSendRwnd(SYN_RCVD);
           (*cs).state.SetLastRecvd(seqnum+1); //no data in syn packet
 
@@ -301,7 +301,8 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
     //variables
     SockRequestResponse request;
     SockRequestResponse response;
-    //ConnectionToStateMapping<TCPState> new_cs;
+    ConnectionToStateMapping<TCPState> new_cs;
+    TCPState accept_c;
     unsigned int initial_seq_num;
     TCPState accept_c; //the new state we add to the list
     Packet ret_p;
@@ -361,10 +362,10 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
         //the new connection is what's specified by the request from the socket
 
         //generate new state
-        TCPState accept_c(rand(), LISTEN, TIMERTRIES);
+        accept_c = TCPState(rand(), LISTEN, TIMERTRIES);
         
         //fill out state of ConnectionToStateMapping
-        ConnectionToStateMapping<TCPState> new_cs(request.connection, Time(), accept_c, false);
+        new_cs = ConnectionToStateMapping<TCPState>(request.connection, Time(), accept_c, false);
 
         //add new ConnectionToStateMapping to list
         clist.push_front(new_cs);
