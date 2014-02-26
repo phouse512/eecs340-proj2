@@ -147,6 +147,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   //info from tcph
   tcph.GetDestPort(c.srcport);
   tcph.GetSourcePort(c.destport);
+  cout << "ports" << c.srcport << c.destport << endl;
   tcph.GetFlags(flags);
   tcph.GetSeqNum(seqnum);
   tcph.GetAckNum(acknum);
@@ -206,12 +207,14 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           /*MAKE TCP HEADER*/
           //variables
           TCPHeader ret_tcph;
-          unsigned int my_seqnum = rand(); 
+         // unsigned int my_seqnum = rand(); 
           unsigned char my_flags;
 
           ret_tcph.SetSourcePort((*cs).connection.srcport, ret_p);
           ret_tcph.SetDestPort((*cs).connection.destport, ret_p);
-          ret_tcph.SetSeqNum(my_seqnum, ret_p);
+          cout << "ports" << (*cs).connection.srcport << (*cs).connection.destport << endl;
+
+          ret_tcph.SetSeqNum((*cs).state.GetLastSent(), ret_p);
           ret_tcph.SetAckNum(seqnum+1, ret_p); //set to isn+1
           cout << "Outgoing seqnum is " << my_seqnum << endl;
           cout << "Outgoing acknum is " << seqnum+1 << endl;
