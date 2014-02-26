@@ -170,9 +170,6 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         //if SYN bit is set
         if(IS_SYN(flags)){
 
-          /*NOTE THAT WE ARE DOING STOP AND WAIT ATM. 
-          COMMENTED OUT SET COMMANDS ARE FOR GBN */    
-
           //update state
           //need to update state after every state
           (*cs).state.SetState(SYN_RCVD);
@@ -195,10 +192,10 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         // Necessary conditions to move into ESTABLISHED: 
         // SYN bit not set, ACK bit set, seqnum == client_isn+1, ack == server_isn+1
         cout << "Current state: SYN_RCVD" << endl;
-        // if(IS_SYN(flags)==false 
-        //   && IS_ACK(flags)==true
+        if(IS_SYN(flags)==false 
+           && IS_ACK(flags)==true
         //   && seqnum==(*cs).state.GetLastRecvd()+1 
-        //   && acknum==(*cs).state.GetLastSent()+1) {
+           && acknum==(*cs).state.GetLastSent()+1) {
 
           // /* FORWARD DATA TO SOCKET */
           // cout << "inside the logic" << endl;
@@ -227,7 +224,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         MinetSend(sock, response);        
 
 
-       // }
+       }
 
         break;
 
@@ -308,10 +305,9 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
     //variables
     SockRequestResponse request;
     SockRequestResponse response;
-    ConnectionToStateMapping<TCPState> new_cs;
-    TCPState accept_c;
-    unsigned int initial_seq_num;
-    TCPState accept_c; //the new state we add to the list
+    //ConnectionToStateMapping<TCPState> new_cs;
+    //unsigned int initial_seq_num;
+    //TCPState accept_c; //the new state we add to the list
     Packet ret_p;
 
     //grab request from socket
@@ -371,20 +367,20 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
         //the new connection is what's specified by the request from the socket
 
         //generate new state
-        accept_c = TCPState(rand(), LISTEN, TIMERTRIES);
-        
+        //accept_c = TCPState(rand(), LISTEN, TIMERTRIES);
+        TCPState accept_c(rand(), LISTEN, TIMERTRIES);
+
         //fill out state of ConnectionToStateMapping
-        new_cs = ConnectionToStateMapping<TCPState>(request.connection, Time(), accept_c, false);
+        //new_cs = ConnectionToStateMapping<TCPState>(request.connection, Time(), accept_c, false);
+        ConnectionToStateMapping<TCPState> new_cs(request.connection, Time(), accept_c, false);
 
         //add new ConnectionToStateMapping to list
         clist.push_front(new_cs);
-        cout << "pushed? :(" << endl;
 
         //send a STATUS to the socket with only error code set
         response.type = STATUS;
         response.error = EOK;
         MinetSend(sock, response);        
-        cout << "exit accept:(" << endl;
 
         break;
 
