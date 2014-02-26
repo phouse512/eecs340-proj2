@@ -193,7 +193,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           ret_iph.SetProtocol(IP_PROTO_TCP);
           ret_iph.SetSourceIP((*cs).connection.src);
           ret_iph.SetDestIP((*cs).connection.dest);
-          ret_iph.SetTotalLength(TCP_HEADER_LENGTH+IP_HEADER_BASE_LENGTH);
+          ret_iph.SetTotalLength(TCP_HEADER_BASE_LENGTH+IP_HEADER_BASE_LENGTH);
           // push it onto the packet
           ret_p.PushFrontHeader(ret_iph);
 
@@ -203,8 +203,8 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           unsigned int my_seqnum = rand(); 
           unsigned char my_flags;
 
-          ret_tcph.SetSourcePort((*cs).srcport, ret_p);
-          ret_tcph.SetDestPort((*cs).destport, ret_p);
+          ret_tcph.SetSourcePort((*cs).connection.srcport, ret_p);
+          ret_tcph.SetDestPort((*cs).connection.destport, ret_p);
           ret_tcph.SetSeqNum(my_seqnum, ret_p);
           ret_tcph.SetAckNum(seqnum+1, ret_p); //set to isn+1
 
