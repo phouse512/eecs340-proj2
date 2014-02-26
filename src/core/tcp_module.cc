@@ -177,14 +177,14 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
         //if SYN bit is set
         if(IS_SYN(flags)){
-
+          (*cs).connection = c;
           //update state
           //need to update state after every state
           (*cs).state.SetState(SYN_RCVD);
           //(*cs).state.SetTimerTries(SYN_RCVD);
           //(*cs).state.SetLastAcked(SYN_RCVD);
           (*cs).state.SetLastSent(rand());
-          //(*cs).state.SetSendRwnd(SYN_RCVD);
+          //(*cs).state.SetSendRwnd(SYN_RCVD); 
           (*cs).state.SetLastRecvd(seqnum); //no data in syn packet
   cout << "Set last sent to " << (*cs).state.GetLastSent() << endl;
   cout << "Set last rcvd to " << (*cs).state.GetLastRecvd() << endl;
@@ -216,7 +216,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
           ret_tcph.SetSeqNum((*cs).state.GetLastSent(), ret_p);
           ret_tcph.SetAckNum(seqnum+1, ret_p); //set to isn+1
-          cout << "Outgoing seqnum is " << my_seqnum << endl;
+          //cout << "Outgoing seqnum is " << my_seqnum << endl;
           cout << "Outgoing acknum is " << seqnum+1 << endl;
 
           //set flags
@@ -224,13 +224,14 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           SET_ACK(my_flags);
           ret_tcph.SetFlags(my_flags, ret_p);
 
-          ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH, ret_p);
+          ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH/4, ret_p);
           // ret_tcph.SetWinSize(0, ret_p);
           // ret_tcph.SetUrgentPtr(0, ret_p);
           // ret_tcph.SetOptions(0, ret_p);
 
           //recompute checksum with headers in
           ret_tcph.RecomputeChecksum(ret_p);
+          ret_tcph.Print(cout);
 
           //make sure ip header is in front
           ret_p.PushBackHeader(ret_tcph);
