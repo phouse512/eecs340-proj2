@@ -88,8 +88,10 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   Packet p;
   TCPHeader tcph;
   IPHeader iph;
-  unsigned tcphlen;
-  unsigned iphlen;
+  unsigned tcphlen_est;
+  unsigned iphlen_est;
+  unsigned char tcphlen;
+  unsigned char iphlen;
 
   //received packet properties
   unsigned short total_len; //length of packet w/ headers
@@ -107,8 +109,8 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   MinetReceive(mux,p);
 
   //get header length estimates
-  tcphlen=TCPHeader::EstimateTCPHeaderLength(p);
-  iphlen=IPHeader::EstimateIPHeaderLength(p);
+  tcphlen_est=TCPHeader::EstimateTCPHeaderLength(p);
+  iphlen_est=IPHeader::EstimateIPHeaderLength(p);
 
   //extract headers...
   p.ExtractHeaderFromPayload<TCPHeader>(tcphlen);
@@ -123,8 +125,13 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
   //length of headers
   iph.GetTotalLength(total_len); //total length including ip header
+  iph.GetHeaderLength(iphlen); //length in 32 bit words ie. num of 4byte chunks
+  iphlen <<= 2; //want to multiply by 4 to get byte length
+  tcph.GetHeaderLength(tcphlen); //length in 32 bit words ie. num of 4byte chunks
+  tcphlen <<= 2; //want to multiply by 4 to get byte length
+  
   data_len = total_len - iphlen - tcphlen; //actual data length
-  cout << "Incoming data has length" << data_len << endl;
+  cout << "Incoming data has length " << data_len << endl;
   //get data
   data = p.GetPayload().ExtractFront(data_len);
 
