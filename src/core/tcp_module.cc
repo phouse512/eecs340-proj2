@@ -110,11 +110,9 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
   //get header length estimates
   tcphlen_est=TCPHeader::EstimateTCPHeaderLength(p);
-  iphlen_est=IPHeader::EstimateIPHeaderLength(p);
 
   //extract headers...
-  p.ExtractHeaderFromPayload<TCPHeader>(tcphlen);
-  p.ExtractHeaderFromPayload<IPHeader>(iphlen);
+  p.ExtractHeaderFromPayload<TCPHeader>(tcphlen_est);
 
   //store headers in tcph and iph
   tcph=p.FindHeader(Headers::TCPHeader);
@@ -127,9 +125,9 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   iph.GetTotalLength(total_len); //total length including ip header
   iph.GetHeaderLength(iphlen); //length in 32 bit words ie. num of 4byte chunks
   iphlen <<= 2; //want to multiply by 4 to get byte length
-  tcph.GetHeaderLength(tcphlen); //length in 32 bit words ie. num of 4byte chunks
+  tcph.GetHeaderLen(tcphlen); //length in 32 bit words ie. num of 4byte chunks
   tcphlen <<= 2; //want to multiply by 4 to get byte length
-  
+
   data_len = total_len - iphlen - tcphlen; //actual data length
   cout << "Incoming data has length " << data_len << endl;
   //get data
@@ -186,8 +184,9 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           //(*cs).state.SetLastAcked(SYN_RCVD);
           (*cs).state.SetLastSent(rand());
           //(*cs).state.SetSendRwnd(SYN_RCVD);
-          (*cs).state.SetLastRecvd(seqnum+1); //no data in syn packet
-
+          (*cs).state.SetLastRecvd(seqnum); //no data in syn packet
+  cout << "Set last sent to " << (*cs).state.GetLastSent() << endl;
+  cout << "Set last rcvd to " << (*cs).state.GetLastRecvd() << endl;
           //make return packet
           //ret_p = MakePacket(*cs, SEND_SYNACK, 0);
 
@@ -214,6 +213,8 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           ret_tcph.SetDestPort((*cs).connection.destport, ret_p);
           ret_tcph.SetSeqNum(my_seqnum, ret_p);
           ret_tcph.SetAckNum(seqnum+1, ret_p); //set to isn+1
+          cout << "Outgoing seqnum is " << my_seqnum << endl;
+          cout << "Outgoing acknum is " << seqnum+1 << endl;
 
           //set flags
           SET_SYN(my_flags);
