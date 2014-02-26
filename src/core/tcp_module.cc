@@ -124,7 +124,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   //length of headers
   iph.GetTotalLength(total_len); //total length including ip header
   data_len = total_len - iphlen - tcphlen; //actual data length
-  
+  cout << "Incoming data has length" << data_len << endl;
   //get data
   data = p.GetPayload().ExtractFront(data_len);
 
@@ -148,6 +148,8 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   // tcph.GetWinSize();
   // tcph.GetUrgentPtr();
   // tcph.GetOptions();
+  cout << "Incoming seqnum is " << seqnum << endl;
+  cout << "Incoming acknum is " << acknum << endl;
 
   //find ConnectionToStateMapping in list
   ConnectionList<TCPState>::iterator cs = clist.FindMatching(c);
@@ -180,7 +182,49 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           (*cs).state.SetLastRecvd(seqnum+1); //no data in syn packet
 
           //make return packet
-          ret_p = MakePacket(*cs, SEND_SYNACK, 0);
+          //ret_p = MakePacket(*cs, SEND_SYNACK, 0);
+
+          /* MAKE SYNACK PACKET */
+          //Packet ret_p;
+
+          /* MAKE IP HEADER */
+          IPHeader ret_iph;
+
+          ret_iph.SetProtocol(IP_PROTO_TCP);
+          ret_iph.SetSourceIP((*cs).connection.src);
+          ret_iph.SetDestIP((*cs).connection.dest);
+          ret_iph.SetTotalLength(TCP_HEADER_LENGTH+IP_HEADER_BASE_LENGTH);
+          // push it onto the packet
+          ret_p.PushFrontHeader(ret_iph);
+
+          /*MAKE TCP HEADER*/
+          //variables
+          TCPHeader ret_tcph;
+          unsigned int my_seqnum = rand(); 
+          unsigned char my_flags;
+
+          ret_tcph.SetSourcePort((*cs).srcport, ret_p);
+          ret_tcph.SetDestPort((*cs).destport, ret_p);
+          ret_tcph.SetSeqNum(my_seqnum, ret_p);
+          ret_tcph.SetAckNum(seqnum+1, ret_p); //set to isn+1
+
+          //set flags
+          SET_SYN(my_flags);
+          SET_ACK(my_flags);
+          ret_tcph.SetFlags(my_flags, ret_p);
+
+          ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH, ret_p);
+          // ret_tcph.SetWinSize(0, ret_p);
+          // ret_tcph.SetUrgentPtr(0, ret_p);
+          // ret_tcph.SetOptions(0, ret_p);
+
+          //recompute checksum with headers in
+          ret_tcph.RecomputeChecksum(ret_p);
+
+          //make sure ip header is in front
+          ret_p.PushBackHeader(ret_tcph);
+
+          /* end header */
 
           //use minetSend for above packet and mux
           MinetSend(mux, ret_p);
@@ -358,7 +402,7 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 
         break;
 
-      case ACCEPT:
+      case ACCEPT: {
         cout << "Current state: ACCEPT" << endl;
         /* ADD A NEW ACCEPT CONNECTION */
 
@@ -381,7 +425,7 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
         response.type = STATUS;
         response.error = EOK;
         MinetSend(sock, response);        
-
+        }
         break;
 
       case WRITE:
