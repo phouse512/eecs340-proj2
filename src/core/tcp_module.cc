@@ -89,7 +89,6 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   TCPHeader tcph;
   IPHeader iph;
   unsigned tcphlen_est;
-  unsigned iphlen_est;
   unsigned char tcphlen;
   unsigned char iphlen;
 
@@ -111,7 +110,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   //get header length estimates
   tcphlen_est=TCPHeader::EstimateTCPHeaderLength(p);
 
-  //extract headers...
+  //extract headers
   p.ExtractHeaderFromPayload<TCPHeader>(tcphlen_est);
 
   //store headers in tcph and iph
@@ -147,10 +146,11 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   //info from tcph
   tcph.GetDestPort(c.srcport);
   tcph.GetSourcePort(c.destport);
-  cout << "ports" << c.srcport << c.destport << endl;
   tcph.GetFlags(flags);
   tcph.GetSeqNum(seqnum);
   tcph.GetAckNum(acknum);
+  cout << "Incoming tcp header: " << endl;
+  tcph.Print(cout);
   // tcph.GetWinSize();
   // tcph.GetUrgentPtr();
   // tcph.GetOptions();
@@ -177,7 +177,10 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
         //if SYN bit is set
         if(IS_SYN(flags)){
+
+          //set connection
           (*cs).connection = c;
+
           //update state
           //need to update state after every state
           (*cs).state.SetState(SYN_RCVD);
@@ -208,7 +211,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           //variables
           TCPHeader ret_tcph;
          // unsigned int my_seqnum = rand(); 
-          unsigned char my_flags;
+          unsigned char my_flags = 0;
 
           ret_tcph.SetSourcePort((*cs).connection.srcport, ret_p);
           ret_tcph.SetDestPort((*cs).connection.destport, ret_p);
