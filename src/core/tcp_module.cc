@@ -165,7 +165,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         break;
 
       case LISTEN:
-        cout << "listening wheee" << endl;
+        cout << "Current state: LISTEN" << endl;
 
         //if SYN bit is set
         if(IS_SYN(flags)){
@@ -194,7 +194,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
       case SYN_RCVD:
         // Necessary conditions to move into ESTABLISHED: 
         // SYN bit not set, ACK bit set, seqnum == client_isn+1, ack == server_isn+1
-        cout << "currently in syn_rcvd" << endl;
+        cout << "Current state: SYN_RCVD" << endl;
         // if(IS_SYN(flags)==false 
         //   && IS_ACK(flags)==true
         //   && seqnum==(*cs).state.GetLastRecvd()+1 
@@ -232,11 +232,11 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         break;
 
       case SYN_SENT:
-        cout << "currently at syn_sent" << endl;
+        cout << "Current state: SYN_SENT" << endl;
         break;
 
       case ESTABLISHED:
-        cout << "current state: established" << endl;
+        cout << "Current state: ESTABLISHED" << endl;
 
         /* FORWARD DATA TO SOCKET */
         response.type = WRITE;
@@ -260,30 +260,37 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         break;
 
       case SEND_DATA:
+        cout << "Current state: SEND_DATA" << endl;
 
         break;
 
       case CLOSE_WAIT:
+        cout << "Current state: CLOSE_WAIT" << endl;
 
         break;
 
       case FIN_WAIT1:
+        cout << "Current state: FIN_WAIT1" << endl;
 
         break;
 
       case CLOSING:
+        cout << "Current state: CLOSING" << endl;
 
         break;
 
       case LAST_ACK:
+        cout << "Current state: LAST_ACK" << endl;
 
         break;
 
       case FIN_WAIT2:
+        cout << "Current state: FIN_WAIT2" << endl;
 
         break;
 
       case TIME_WAIT:
+        cout << "Current state: TIME_WAIT" << endl;
 
         break;
 
@@ -316,6 +323,8 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
     switch(request.type){
 
       case CONNECT:
+              cout << "Current state: CONNECT" << endl;
+
         // cout << "attempting to add a new connection :(" << endl;
         // /* ADD A NEW CONNECT CONNECTION */
 
@@ -354,7 +363,7 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
         break;
 
       case ACCEPT:
-        cout << "accepting a new connection :D" << endl;
+        cout << "Current state: ACCEPT" << endl;
         /* ADD A NEW ACCEPT CONNECTION */
 
         // first initialize the ConnectionToStateMapping
@@ -380,18 +389,22 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
         break;
 
       case WRITE:
+        cout << "Current state: WRITE" << endl;
 
         break;
 
       case FORWARD:
+        cout << "Current state: FORWARD" << endl;
 
         break;
 
       case CLOSE:
+        cout << "Current state: CLOSE" << endl;
 
         break;
 
       case STATUS:
+        cout << "Current state: STATUS" << endl;
 
         break;
 
