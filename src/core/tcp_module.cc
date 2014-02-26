@@ -127,9 +127,9 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   tcph.GetHeaderLen(tcphlen); //length in 32 bit words ie. num of 4byte chunks
   tcphlen <<= 2; //want to multiply by 4 to get byte length
 
+  //get data
   data_len = total_len - iphlen - tcphlen; //actual data length
   cout << "Incoming data has length " << data_len << endl;
-  //get data
   data = p.GetPayload().ExtractFront(data_len);
 
   //fill out a blank reference connection object
@@ -152,8 +152,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   cout << "Incoming tcp header: " << endl;
   tcph.Print(cout);
   // tcph.GetWinSize();
-  // tcph.GetUrgentPtr();
-  // tcph.GetOptions();
+
   cout << "Incoming seqnum is " << seqnum << endl;
   cout << "Incoming acknum is " << acknum << endl;
 
@@ -164,8 +163,10 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   unsigned int state = (*cs).state.GetState();
 
   if (cs!=clist.end() && checksumok) {
+    //initialize variables
     SockRequestResponse response;
     Packet ret_p;
+
     switch(state) {
 
       case CLOSED:
@@ -189,57 +190,56 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           (*cs).state.SetLastSent(rand());
           //(*cs).state.SetSendRwnd(SYN_RCVD); 
           (*cs).state.SetLastRecvd(seqnum); //no data in syn packet
-  cout << "Set last sent to " << (*cs).state.GetLastSent() << endl;
-  cout << "Set last rcvd to " << (*cs).state.GetLastRecvd() << endl;
+  
           //make return packet
-          //ret_p = MakePacket(*cs, SEND_SYNACK, 0);
+          ret_p = MakePacket(*cs, SEND_SYNACK, 0);
 
           /* MAKE SYNACK PACKET */
           //Packet ret_p;
 
-          /* MAKE IP HEADER */
-          IPHeader ret_iph;
+         //  /* MAKE IP HEADER */
+         //  IPHeader ret_iph;
 
-          ret_iph.SetProtocol(IP_PROTO_TCP);
-          ret_iph.SetSourceIP((*cs).connection.src);
-          ret_iph.SetDestIP((*cs).connection.dest);
-          ret_iph.SetTotalLength(TCP_HEADER_BASE_LENGTH+IP_HEADER_BASE_LENGTH);
-          // push it onto the packet
-          ret_p.PushFrontHeader(ret_iph);
+         //  ret_iph.SetProtocol(IP_PROTO_TCP);
+         //  ret_iph.SetSourceIP((*cs).connection.src);
+         //  ret_iph.SetDestIP((*cs).connection.dest);
+         //  ret_iph.SetTotalLength(TCP_HEADER_BASE_LENGTH+IP_HEADER_BASE_LENGTH);
+         //  // push it onto the packet
+         //  ret_p.PushFrontHeader(ret_iph);
 
-          /*MAKE TCP HEADER*/
-          //variables
-          TCPHeader ret_tcph;
-         // unsigned int my_seqnum = rand(); 
-          unsigned char my_flags = 0;
+         //  /*MAKE TCP HEADER*/
+         //  //variables
+         //  TCPHeader ret_tcph;
+         // // unsigned int my_seqnum = rand(); 
+         //  unsigned char my_flags = 0;
 
-          ret_tcph.SetSourcePort((*cs).connection.srcport, ret_p);
-          ret_tcph.SetDestPort((*cs).connection.destport, ret_p);
-          cout << "ports" << (*cs).connection.srcport << (*cs).connection.destport << endl;
+         //  ret_tcph.SetSourcePort((*cs).connection.srcport, ret_p);
+         //  ret_tcph.SetDestPort((*cs).connection.destport, ret_p);
+         //  cout << "ports" << (*cs).connection.srcport << (*cs).connection.destport << endl;
 
-          ret_tcph.SetSeqNum((*cs).state.GetLastSent(), ret_p);
-          ret_tcph.SetAckNum(seqnum+1, ret_p); //set to isn+1
-          //cout << "Outgoing seqnum is " << my_seqnum << endl;
-          cout << "Outgoing acknum is " << seqnum+1 << endl;
+         //  ret_tcph.SetSeqNum((*cs).state.GetLastSent(), ret_p);
+         //  ret_tcph.SetAckNum(seqnum+1, ret_p); //set to isn+1
+         //  //cout << "Outgoing seqnum is " << my_seqnum << endl;
+         //  cout << "Outgoing acknum is " << seqnum+1 << endl;
 
-          //set flags
-          SET_SYN(my_flags);
-          SET_ACK(my_flags);
-          ret_tcph.SetFlags(my_flags, ret_p);
+         //  //set flags
+         //  SET_SYN(my_flags);
+         //  SET_ACK(my_flags);
+         //  ret_tcph.SetFlags(my_flags, ret_p);
 
-          ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH/4, ret_p);
-          // ret_tcph.SetWinSize(0, ret_p);
-          // ret_tcph.SetUrgentPtr(0, ret_p);
-          // ret_tcph.SetOptions(0, ret_p);
+         //  ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH/4, ret_p);
+         //  // ret_tcph.SetWinSize(0, ret_p);
+         //  // ret_tcph.SetUrgentPtr(0, ret_p);
+         //  // ret_tcph.SetOptions(0, ret_p);
 
-          //recompute checksum with headers in
-          ret_tcph.RecomputeChecksum(ret_p);
-          ret_tcph.Print(cout);
+         //  //recompute checksum with headers in
+         //  ret_tcph.RecomputeChecksum(ret_p);
+         //  ret_tcph.Print(cout);
 
-          //make sure ip header is in front
-          ret_p.PushBackHeader(ret_tcph);
+         //  //make sure ip header is in front
+         //  ret_p.PushBackHeader(ret_tcph);
 
-          /* end header */
+         //  /* end header */
 
           //use minetSend for above packet and mux
           MinetSend(mux, ret_p);
@@ -473,24 +473,22 @@ Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsig
 
   /* MAKE IP HEADER */
   IPHeader ret_iph;
-
   ret_iph.SetProtocol(IP_PROTO_TCP);
   ret_iph.SetSourceIP(cs.connection.src);
   ret_iph.SetDestIP(cs.connection.dest);
   ret_iph.SetTotalLength(TCP_HEADER_BASE_LENGTH+IP_HEADER_BASE_LENGTH+data_len);
-  // push it onto the packet
   ret_p.PushFrontHeader(ret_iph);
 
   /*MAKE TCP HEADER*/
   TCPHeader ret_tcph;
-
-  //common settings
   ret_tcph.SetSourcePort(cs.connection.srcport, ret_p);
   ret_tcph.SetDestPort(cs.connection.destport, ret_p);
   ret_tcph.SetSeqNum(cs.state.GetLastSent(), ret_p);
+  ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH/4, ret_p);
+  // ret_tcph.SetWinSize(0, ret_p);
 
   //flags and non-common settings
-  unsigned char my_flags;
+  unsigned char my_flags = 0;
   switch(cs.state.GetState()) {
 
     case SEND_SYN:
@@ -499,7 +497,7 @@ Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsig
       break;
 
     case SEND_SYNACK:
-      ret_tcph.SetAckNum(cs.state.GetLastRecvd(), ret_p); 
+      ret_tcph.SetAckNum(cs.state.GetLastRecvd()+1, ret_p); 
 
       SET_SYN(my_flags);
       SET_ACK(my_flags);
@@ -507,13 +505,10 @@ Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsig
       break;
   }
 
-  ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH, ret_p);
-  // ret_tcph.SetWinSize(0, ret_p);
-  // ret_tcph.SetUrgentPtr(0, ret_p);
-  // ret_tcph.SetOptions(0, ret_p);
-
   //recompute checksum with headers in
   ret_tcph.RecomputeChecksum(ret_p);
+
+  ret_tcph.Print(cout);
 
   //make sure ip header is in front
   ret_p.PushBackHeader(ret_tcph);
@@ -522,7 +517,7 @@ Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsig
 }
 
 // /* MAKE SYNACK PACKET */
-//           Packet ret_p;
+//           //Packet ret_p;
 
 //           /* MAKE IP HEADER */
 //           IPHeader ret_iph;
@@ -530,33 +525,38 @@ Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsig
 //           ret_iph.SetProtocol(IP_PROTO_TCP);
 //           ret_iph.SetSourceIP((*cs).connection.src);
 //           ret_iph.SetDestIP((*cs).connection.dest);
-//           ret_iph.SetTotalLength(TCP_HEADER_LENGTH+IP_HEADER_BASE_LENGTH);
+//           ret_iph.SetTotalLength(TCP_HEADER_BASE_LENGTH+IP_HEADER_BASE_LENGTH);
 //           // push it onto the packet
 //           ret_p.PushFrontHeader(ret_iph);
 
 //           /*MAKE TCP HEADER*/
 //           //variables
 //           TCPHeader ret_tcph;
-//           unsigned int my_seqnum = rand(); 
-//           unsigned char my_flags;
+//          // unsigned int my_seqnum = rand(); 
+//           unsigned char my_flags = 0;
 
-//           ret_tcph.SetSourcePort((*cs).srcport, ret_p);
-//           ret_tcph.SetDestPort((*cs).destport, ret_p);
-//           ret_tcph.SetSeqNum(my_seqnum, ret_p);
+//           ret_tcph.SetSourcePort((*cs).connection.srcport, ret_p);
+//           ret_tcph.SetDestPort((*cs).connection.destport, ret_p);
+//           cout << "ports" << (*cs).connection.srcport << (*cs).connection.destport << endl;
+
+//           ret_tcph.SetSeqNum((*cs).state.GetLastSent(), ret_p);
 //           ret_tcph.SetAckNum(seqnum+1, ret_p); //set to isn+1
+//           //cout << "Outgoing seqnum is " << my_seqnum << endl;
+//           cout << "Outgoing acknum is " << seqnum+1 << endl;
 
 //           //set flags
 //           SET_SYN(my_flags);
 //           SET_ACK(my_flags);
 //           ret_tcph.SetFlags(my_flags, ret_p);
 
-//           ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH, ret_p);
+//           ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH/4, ret_p);
 //           // ret_tcph.SetWinSize(0, ret_p);
 //           // ret_tcph.SetUrgentPtr(0, ret_p);
 //           // ret_tcph.SetOptions(0, ret_p);
 
 //           //recompute checksum with headers in
 //           ret_tcph.RecomputeChecksum(ret_p);
+//           ret_tcph.Print(cout);
 
 //           //make sure ip header is in front
 //           ret_p.PushBackHeader(ret_tcph);
