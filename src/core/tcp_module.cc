@@ -131,6 +131,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   data_len = total_len - iphlen - tcphlen; //actual data length
   cout << "Incoming data has length " << data_len << endl;
   data = p.GetPayload().ExtractFront(data_len);
+  data.Print(cout);
 
   //fill out a blank reference connection object
   Connection c;
@@ -194,53 +195,6 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           //make return packet
           ret_p = MakePacket(*cs, SEND_SYNACK, 0);
 
-          /* MAKE SYNACK PACKET */
-          //Packet ret_p;
-
-         //  /* MAKE IP HEADER */
-         //  IPHeader ret_iph;
-
-         //  ret_iph.SetProtocol(IP_PROTO_TCP);
-         //  ret_iph.SetSourceIP((*cs).connection.src);
-         //  ret_iph.SetDestIP((*cs).connection.dest);
-         //  ret_iph.SetTotalLength(TCP_HEADER_BASE_LENGTH+IP_HEADER_BASE_LENGTH);
-         //  // push it onto the packet
-         //  ret_p.PushFrontHeader(ret_iph);
-
-         //  /*MAKE TCP HEADER*/
-         //  //variables
-         //  TCPHeader ret_tcph;
-         // // unsigned int my_seqnum = rand(); 
-         //  unsigned char my_flags = 0;
-
-         //  ret_tcph.SetSourcePort((*cs).connection.srcport, ret_p);
-         //  ret_tcph.SetDestPort((*cs).connection.destport, ret_p);
-         //  cout << "ports" << (*cs).connection.srcport << (*cs).connection.destport << endl;
-
-         //  ret_tcph.SetSeqNum((*cs).state.GetLastSent(), ret_p);
-         //  ret_tcph.SetAckNum(seqnum+1, ret_p); //set to isn+1
-         //  //cout << "Outgoing seqnum is " << my_seqnum << endl;
-         //  cout << "Outgoing acknum is " << seqnum+1 << endl;
-
-         //  //set flags
-         //  SET_SYN(my_flags);
-         //  SET_ACK(my_flags);
-         //  ret_tcph.SetFlags(my_flags, ret_p);
-
-         //  ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH/4, ret_p);
-         //  // ret_tcph.SetWinSize(0, ret_p);
-         //  // ret_tcph.SetUrgentPtr(0, ret_p);
-         //  // ret_tcph.SetOptions(0, ret_p);
-
-         //  //recompute checksum with headers in
-         //  ret_tcph.RecomputeChecksum(ret_p);
-         //  ret_tcph.Print(cout);
-
-         //  //make sure ip header is in front
-         //  ret_p.PushBackHeader(ret_tcph);
-
-         //  /* end header */
-
           //use minetSend for above packet and mux
           MinetSend(mux, ret_p);
         }
@@ -256,33 +210,22 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         //   && seqnum==(*cs).state.GetLastRecvd()+1 
            && acknum==(*cs).state.GetLastSent()+1) {
 
-          // /* FORWARD DATA TO SOCKET */
-          // cout << "inside the logic" << endl;
-          // response.type = WRITE;
-          // response.connection = c;
-          // response.data = data;
-          // response.bytes = data_len; 
-          // MinetSend(sock, response);
-
-          /* ACK PACKET - IMPLEMENT AFTER TIMERS ARE IN? */
-
           //update state
           (*cs).state.SetState(ESTABLISHED);
-                  cout << "set state to estab in synrcvd" << endl;
+          cout << "set state to estab in synrcvd" << endl;
 
           //(*cs).state.SetTimerTries(SYN_RCVD);
-          (*cs).state.SetLastAcked(acknum);
+          (*cs).state.SetLastAcked(acknum-1);
           //(*cs).state.SetLastSent(my_seqnum);
           //(*cs).state.SetSendRwnd(SYN_RCVD);
-          (*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
+          //(*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
 
-                  //send a STATUS to the socket with only error code set
-        response.type = WRITE;
-        response.error = EOK;
-        response.bytes = 0;
-        MinetSend(sock, response);        
-
-
+          //send a STATUS to the socket indicating connection
+          response.type = WRITE;
+          response.connection = c;
+          response.error = EOK;
+          response.bytes = 0;
+          MinetSend(sock, response);        
        }
 
         break;
@@ -294,25 +237,32 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
       case ESTABLISHED:
         cout << "Current state: ESTABLISHED" << endl;
 
-        /* FORWARD DATA TO SOCKET */
-        response.type = WRITE;
-        response.connection = c;
-        response.data = data;
-        response.bytes = data_len; 
-        MinetSend(sock, response);
+        //if there is data
+        if(data_len!=0){
 
-        /* ACK PACKET - IMPLEMENT AFTER TIMERS ARE IN? */
+        
 
-        //update state
-        //(*cs).state.SetState(ESTABLISHED);
-        //(*cs).state.SetTimerTries(SYN_RCVD);
-        if(IS_ACK(flags)){
-          (*cs).state.SetLastAcked(acknum-1);
+          /* FORWARD DATA TO SOCKET */
+          (*cs).state.RecvBuffer.AddBack(data);
+          response.type = WRITE;
+          response.connection = c;
+          response.data = (*cs).state.RecvBuffer;
+          response.bytes = (*cs).state.RecvBuffer.GetSize();
+          response.error = EOK;
+          MinetSend(sock, response);
+
+          /* ACK PACKET - IMPLEMENT AFTER TIMERS ARE IN? */
+
+          //update state
+          //(*cs).state.SetState(ESTABLISHED);
+          //(*cs).state.SetTimerTries(SYN_RCVD);
+          if(IS_ACK(flags)){
+            (*cs).state.SetLastAcked(acknum-1);
+          }
+          //(*cs).state.SetLastSent(my_seqnum);
+          //(*cs).state.SetSendRwnd(SYN_RCVD);
+          (*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
         }
-        //(*cs).state.SetLastSent(my_seqnum);
-        //(*cs).state.SetSendRwnd(SYN_RCVD);
-        (*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
-
         break;
 
       case SEND_DATA:
@@ -418,28 +368,22 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
         break;
 
       case ACCEPT: {
-        cout << "Current state: ACCEPT" << endl;
-        /* ADD A NEW ACCEPT CONNECTION */
+          cout << "Current state: ACCEPT" << endl;
+          /* ADD A NEW ACCEPT CONNECTION */
 
-        // first initialize the ConnectionToStateMapping
-        //Create a new accept connection - will start at LISTEN
-        //the new connection is what's specified by the request from the socket
+          //generate new state
+          TCPState accept_c(rand(), LISTEN, TIMERTRIES);
 
-        //generate new state
-        //accept_c = TCPState(rand(), LISTEN, TIMERTRIES);
-        TCPState accept_c(rand(), LISTEN, TIMERTRIES);
+          //fill out state of ConnectionToStateMapping
+          ConnectionToStateMapping<TCPState> new_cs(request.connection, Time(), accept_c, false);
 
-        //fill out state of ConnectionToStateMapping
-        //new_cs = ConnectionToStateMapping<TCPState>(request.connection, Time(), accept_c, false);
-        ConnectionToStateMapping<TCPState> new_cs(request.connection, Time(), accept_c, false);
+          //add new ConnectionToStateMapping to list
+          clist.push_front(new_cs);
 
-        //add new ConnectionToStateMapping to list
-        clist.push_front(new_cs);
-
-        //send a STATUS to the socket with only error code set
-        response.type = STATUS;
-        response.error = EOK;
-        MinetSend(sock, response);        
+          //send a STATUS to the socket with only error code set
+          response.type = STATUS;
+          response.error = EOK;
+          MinetSend(sock, response);        
         }
         break;
 
@@ -489,7 +433,7 @@ Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsig
 
   //flags and non-common settings
   unsigned char my_flags = 0;
-  switch(cs.state.GetState()) {
+  switch(cmd) {
 
     case SEND_SYN:
       SET_SYN(my_flags);
@@ -508,6 +452,7 @@ Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsig
   //recompute checksum with headers in
   ret_tcph.RecomputeChecksum(ret_p);
 
+  //print header stats
   ret_tcph.Print(cout);
 
   //make sure ip header is in front
@@ -515,50 +460,3 @@ Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsig
 
   return ret_p;
 }
-
-// /* MAKE SYNACK PACKET */
-//           //Packet ret_p;
-
-//           /* MAKE IP HEADER */
-//           IPHeader ret_iph;
-
-//           ret_iph.SetProtocol(IP_PROTO_TCP);
-//           ret_iph.SetSourceIP((*cs).connection.src);
-//           ret_iph.SetDestIP((*cs).connection.dest);
-//           ret_iph.SetTotalLength(TCP_HEADER_BASE_LENGTH+IP_HEADER_BASE_LENGTH);
-//           // push it onto the packet
-//           ret_p.PushFrontHeader(ret_iph);
-
-//           /*MAKE TCP HEADER*/
-//           //variables
-//           TCPHeader ret_tcph;
-//          // unsigned int my_seqnum = rand(); 
-//           unsigned char my_flags = 0;
-
-//           ret_tcph.SetSourcePort((*cs).connection.srcport, ret_p);
-//           ret_tcph.SetDestPort((*cs).connection.destport, ret_p);
-//           cout << "ports" << (*cs).connection.srcport << (*cs).connection.destport << endl;
-
-//           ret_tcph.SetSeqNum((*cs).state.GetLastSent(), ret_p);
-//           ret_tcph.SetAckNum(seqnum+1, ret_p); //set to isn+1
-//           //cout << "Outgoing seqnum is " << my_seqnum << endl;
-//           cout << "Outgoing acknum is " << seqnum+1 << endl;
-
-//           //set flags
-//           SET_SYN(my_flags);
-//           SET_ACK(my_flags);
-//           ret_tcph.SetFlags(my_flags, ret_p);
-
-//           ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH/4, ret_p);
-//           // ret_tcph.SetWinSize(0, ret_p);
-//           // ret_tcph.SetUrgentPtr(0, ret_p);
-//           // ret_tcph.SetOptions(0, ret_p);
-
-//           //recompute checksum with headers in
-//           ret_tcph.RecomputeChecksum(ret_p);
-//           ret_tcph.Print(cout);
-
-//           //make sure ip header is in front
-//           ret_p.PushBackHeader(ret_tcph);
-
-//           /* end header */
