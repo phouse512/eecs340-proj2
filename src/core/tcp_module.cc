@@ -28,8 +28,9 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsigned short data_len);
 
 //for the making of packets
-#define SEND_SYNACK 1
-#define SEND_SYN 2
+#define SEND_SYN 1
+#define SEND_SYNACK 2
+#define SEND_ACK 3
 
 //timertries set to 3, rfc default
 #define TIMERTRIES 3
