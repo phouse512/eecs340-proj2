@@ -87,6 +87,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   /* VARIABLES */
   //packet and headers
   Packet p;
+  //Packet out_p;
   TCPHeader tcph;
   IPHeader iph;
   unsigned tcphlen_est;
@@ -195,6 +196,8 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   
           //make return packet
           ret_p = MakePacket(*cs, SEND_SYNACK, 0);
+                  //MakePacket(out_p, *cs, 0, 3);
+
 
           //use minetSend for above packet and mux
           MinetSend(mux, ret_p);
@@ -268,7 +271,10 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);
         (*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
 
-        MakePacket(*cs, SEND_ACK, 0);
+        ret_p=MakePacket(*cs, SEND_ACK, 0);
+                  //MakePacket(out_p, *cs, 0, 2);
+        MinetSend(mux, ret_p);
+
                 //(*cs).state.SetTimerTries(SYN_RCVD);
 
           //(*cs).state.SetSendRwnd(SYN_RCVD);
@@ -495,4 +501,100 @@ Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsig
   ret_p.PushBackHeader(ret_tcph);
 
   return ret_p;
+}
+
+
+void set_ip_header(IPAddress dest, IPAddress source, int pLength, IPHeader &ip_header, Packet &p) {
+  // Set IP header
+  ip_header.SetDestIP(dest);
+  ip_header.SetSourceIP(source);
+  ip_header.SetTotalLength(pLength);
+  ip_header.SetProtocol(IP_PROTO_TCP);
+  p.PushFrontHeader(ip_header);
+}
+
+void set_tcp_header(unsigned short source_port, unsigned short destination_port, unsigned char flags, ConnectionToStateMapping<TCPState> &a_mapping, Packet &p, bool customSeq, TCPHeader &tcp_header) {
+  // Set TCP
+  tcp_header.SetSourcePort(source_port, p);
+  tcp_header.SetDestPort(destination_port, p);
+  tcp_header.SetHeaderLen((TCP_HEADER_BASE_LENGTH / 4), p);//preventing overflow
+  tcp_header.SetFlags(flags, p);
+  tcp_header.SetAckNum(a_mapping.state.GetLastRecvd(), p);
+  if(customSeq) {
+    tcp_header.SetSeqNum(a_mapping.state.GetLastSent()+1, p);
+  }
+  else {
+    tcp_header.SetSeqNum(a_mapping.state.GetLastAcked()+1, p);
+  }
+  tcp_header.SetUrgentPtr(0, p);
+  tcp_header.SetWinSize(a_mapping.state.GetRwnd(), p);
+  tcp_header.RecomputeChecksum(p);
+  p.PushBackHeader(tcp_header);
+  cout << "TCP Header information: ";
+  tcp_header.Print(cout) << endl;
+}
+
+
+// MakePacket function
+void MakePacket(Packet &p, ConnectionToStateMapping<TCPState> &a_mapping, int sizeOfData, int header, bool customSeq, int sequence) {
+  
+  cout<<"In IP Packet function: Creating a new IP p."<<endl;
+
+  unsigned char flags = 0;
+  int pLength = sizeOfData + TCP_HEADER_BASE_LENGTH + IP_HEADER_BASE_LENGTH;
+  IPAddress source = a_mapping.connection.src;
+  IPAddress destination = a_mapping.connection.dest;
+  IPHeader ip_header;
+  TCPHeader tcp_header;
+  unsigned short source_port = a_mapping.connection.srcport;
+  unsigned short destination_port = a_mapping.connection.destport;
+
+  switch (header){
+  
+  case 1:
+    cout << "Setting SYN only." << endl;
+    SET_SYN(flags);
+    break;
+    
+  case 2:
+    cout << "Setting ACK only." << endl;
+    SET_ACK(flags);
+    break;
+
+  case 3:
+    cout << "Setting ACK ";
+    SET_ACK(flags);
+    cout << "and setting SYN." << endl;
+    cout << "TCP header length: " << TCP_HEADER_BASE_LENGTH << endl;
+    SET_SYN(flags);
+    break;
+    
+  case 4:
+    cout << "Setting PSH and ACK." << endl;
+    SET_PSH(flags);
+    SET_ACK(flags);
+    break;
+
+  case 5:
+    cout << "Setting FIN only." << endl;
+    SET_FIN(flags);
+    break;
+
+  case 6:
+    cout << "Setting FIN ACK." << endl;
+    SET_FIN(flags);
+    SET_ACK(flags);
+    break;
+
+  case 7:
+    SET_RST(flags);
+    break;
+
+  default:
+    break;
+  }
+  
+  set_ip_header(destination, source, pLength, ip_header, p);
+  set_tcp_header(source_port, destination_port, flags, a_mapping, p, customSeq, tcp_header);
+
 }
