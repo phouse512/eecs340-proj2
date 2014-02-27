@@ -38,10 +38,10 @@ void MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned i
 #define TIMERTRIES 3
 
 //estimated rtt
-#define RTT 2
+#define RTT 5
 
 //timeout length
-#define TIMEOUT 5
+#define TIMEOUT 10
 
 int main(int argc, char *argv[])
 {
@@ -166,7 +166,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   tcph.GetAckNum(acknum);
   cout << "Incoming tcp header: " << endl;
   tcph.Print(cout);
-  tcph << endl;
+  cout << endl;
   // tcph.GetWinSize();
 
   //find ConnectionToStateMapping in list
@@ -179,6 +179,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
     //initialize variables
     SockRequestResponse response;
     Packet ret_p;
+    size_t our_window;
 
     switch(state) {
 
@@ -256,19 +257,18 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
            && IS_ACK(flags)==true
            && acknum==(*cs).state.GetLastSent()+1) {
 
-          //reset timer
-          (*cs).timeout = Time()+RTT;
-          (*cs).state.SetTimerTries(TIMERTRIES);
-
           //update state
           (*cs).state.SetState(ESTABLISHED);
           cout << "set state to estab in synsent" << endl;
 
           (*cs).state.SetLastAcked(acknum-1);          
           (*cs).state.SetLastSent((*cs).state.GetLastSent()+1); //no payload
-
-          //(*cs).state.SetSendRwnd(SYN_RCVD);
           (*cs).state.SetLastRecvd(seqnum, data_len); //should be no data
+
+          //reset timer
+          (*cs).timeout = Time()+RTT;
+          (*cs).bTmrActive = true;
+          (*cs).state.SetTimerTries(TIMERTRIES);
 
           //make return packet
           MakePacket(ret_p, *cs, SEND_ACK, 0);
@@ -297,8 +297,21 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
           /* FORWARD DATA TO SOCKET */
           //stick data in receive buffer
-          //stick as much in response as possible
-          (*cs).state.RecvBuffer.AddBack(data);
+          //check for overflow
+          our_window = (*cs).state.TCP_BUFFER_SIZE - (*cs).state.RecvBuffer.GetSize();
+          //overflow
+          if((*cs).state.RecvBuffer.GetSize() < data_len) {
+            (*cs).state.RecvBuffer.AddBack(data.ExtractFront(our_window));
+            (*cs).state.SetLastRecvd(seqnum, our_window); 
+            cout << "Only " << our_window << " bytes out of " << data_len << " able to fit in receive buffer." << endl;
+          }
+          //no overflow
+          else {
+            (*cs).state.RecvBuffer.AddBack(data);
+            (*cs).state.SetLastRecvd(seqnum, data_len); 
+          }
+
+          //assumes a srr can fit an entire receive buffer...
           response.type = WRITE;
           response.connection = c;
           response.data = (*cs).state.RecvBuffer;
@@ -308,21 +321,39 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         
           //update ack if there was one
           if(IS_ACK(flags)){
-              (*cs).state.SetTimerTries(TIMERTRIES);
-              (*cs).state.SetLastAcked(acknum-1);
-          }
+            (*cs).state.SetLastAcked(acknum-1);
 
-          (*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
-            
-          //(*cs).state.SetSendRwnd(SYN_RCVD);
+            //timer reset condition 
+            if((*cs).state.GetLastAcked() == (*cs).state.GetLastSent()) {
+              (*cs).bTmrActive = false;
+              (*cs).state.SetTimerTries(TIMERTRIES);
+            }
+          }
 
           //no payload in what we're sending
           (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);
+
+          //reset timer
+          if((*cs).bTmrActive == false){
+            (*cs).bTmrActive = true;
+            (*cs).timeout = Time() + RTT;
+          }
 
           MakePacket(ret_p, *cs, SEND_ACK, 0);
           MinetSend(mux, ret_p);
 
         }        
+        else if (IS_ACK(flags)) {
+          //no payload, only an ack
+          (*cs).state.SetLastAcked(acknum-1);
+          (*cs).state.SetLastRecvd(seqnum);
+
+          //timer reset condition 
+          if((*cs).state.GetLastAcked() == (*cs).state.GetLastSent()) {
+            (*cs).bTmrActive = false;
+            (*cs).state.SetTimerTries(TIMERTRIES);
+          }
+        }
         else if (IS_FIN(flags)) {
           //no payload
           (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);          
