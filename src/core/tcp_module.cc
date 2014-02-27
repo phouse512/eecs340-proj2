@@ -43,6 +43,13 @@ void MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned i
 //timeout length
 #define TIMEOUT 10
 
+//GBN window initial value
+#define GBN 5
+
+
+//max size of segment in bytes
+#define MSS 536
+
 int main(int argc, char *argv[])
 {
   MinetHandle mux, sock;
@@ -113,6 +120,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   unsigned char flags; //to hold syn, fin, rst, psh flags of packet p
   unsigned int seqnum;
   unsigned int acknum;
+  unsigned short rwnd;
 
 
   /* BEGIN */
@@ -164,10 +172,11 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   tcph.GetFlags(flags);
   tcph.GetSeqNum(seqnum);
   tcph.GetAckNum(acknum);
+  tcph.GetWinSize(rwnd);
+
   cout << "Incoming tcp header: " << endl;
   tcph.Print(cout);
   cout << endl;
-  // tcph.GetWinSize();
 
   //find ConnectionToStateMapping in list
   ConnectionList<TCPState>::iterator cs = clist.FindMatching(c);
@@ -180,6 +189,9 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
     SockRequestResponse response;
     Packet ret_p;
     size_t our_window;
+
+    //set receive window
+    (*cs).state.SetSendRwnd(rwnd);
 
     switch(state) {
 
@@ -202,7 +214,6 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           //(*cs).state.SetTimerTries(SYN_RCVD);
           //(*cs).state.SetLastAcked(SYN_RCVD);
           (*cs).state.SetLastSent(rand());
-          //(*cs).state.SetSendRwnd(SYN_RCVD); 
           (*cs).state.SetLastRecvd(seqnum); //no data in syn packet
 
           //timers
@@ -236,7 +247,6 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           (*cs).state.SetTimerTries(TIMERTRIES);
           (*cs).state.SetLastAcked(acknum-1);          
           //(*cs).state.SetLastSent(my_seqnum);
-          //(*cs).state.SetSendRwnd(SYN_RCVD);
 
           /*ADD IN CASE FROM ESTABLISHED IF THERE IS DATA */
           (*cs).state.SetLastRecvd(seqnum, data_len); 
@@ -292,6 +302,22 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           //is there an ack
           //is there a close
 
+        //if there's an ack
+        if (IS_ACK(flags)) {
+          //wipe send buffer as needed
+          (*cs).state.SendBuffer.Erase(0, acknum - (*cs).state.GetLastAcked - 1);
+
+          (*cs).state.SetLastAcked(acknum-1);
+          //will be overwritten if there was a payload
+          (*cs).state.SetLastRecvd(seqnum);
+
+          //timer reset condition 
+          if((*cs).state.GetLastAcked() == (*cs).state.GetLastSent()) {
+            (*cs).bTmrActive = false;
+            (*cs).state.SetTimerTries(TIMERTRIES);
+          }
+        }
+
         //if there is data
         if(data_len!=0){     
 
@@ -300,7 +326,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           //check for overflow
           our_window = (*cs).state.TCP_BUFFER_SIZE - (*cs).state.RecvBuffer.GetSize();
           //overflow
-          if((*cs).state.RecvBuffer.GetSize() < data_len) {
+          if(our_window < data_len) {
             (*cs).state.RecvBuffer.AddBack(data.ExtractFront(our_window));
             (*cs).state.SetLastRecvd(seqnum, our_window); 
             cout << "Only " << our_window << " bytes out of " << data_len << " able to fit in receive buffer." << endl;
@@ -319,16 +345,16 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           response.error = EOK;
           MinetSend(sock, response);
         
-          //update ack if there was one
-          if(IS_ACK(flags)){
-            (*cs).state.SetLastAcked(acknum-1);
+          // //update ack if there was one
+          // if(IS_ACK(flags)){
+          //   (*cs).state.SetLastAcked(acknum-1);
 
-            //timer reset condition 
-            if((*cs).state.GetLastAcked() == (*cs).state.GetLastSent()) {
-              (*cs).bTmrActive = false;
-              (*cs).state.SetTimerTries(TIMERTRIES);
-            }
-          }
+          //   //timer reset condition 
+          //   if((*cs).state.GetLastAcked() == (*cs).state.GetLastSent()) {
+          //     (*cs).bTmrActive = false;
+          //     (*cs).state.SetTimerTries(TIMERTRIES);
+          //   }
+          // }
 
           //no payload in what we're sending
           (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);
@@ -343,17 +369,17 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           MinetSend(mux, ret_p);
 
         }        
-        else if (IS_ACK(flags)) {
-          //no payload, only an ack
-          (*cs).state.SetLastAcked(acknum-1);
-          (*cs).state.SetLastRecvd(seqnum);
+        // else if (IS_ACK(flags)) {
+        //   //no payload, only an ack
+        //   (*cs).state.SetLastAcked(acknum-1);
+        //   (*cs).state.SetLastRecvd(seqnum);
 
-          //timer reset condition 
-          if((*cs).state.GetLastAcked() == (*cs).state.GetLastSent()) {
-            (*cs).bTmrActive = false;
-            (*cs).state.SetTimerTries(TIMERTRIES);
-          }
-        }
+        //   //timer reset condition 
+        //   if((*cs).state.GetLastAcked() == (*cs).state.GetLastSent()) {
+        //     (*cs).bTmrActive = false;
+        //     (*cs).state.SetTimerTries(TIMERTRIES);
+        //   }
+        // }
         else if (IS_FIN(flags)) {
           //no payload
           (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);          
@@ -417,6 +443,7 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
     SockRequestResponse request;
     SockRequestResponse response;
     Packet ret_p;
+    size_t sendbuf_space;
 
     //grab request from socket
     MinetReceive(sock, request);
@@ -432,6 +459,7 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 
           //generate new state
           TCPState connect_c(rand(), SYN_SENT, TIMERTRIES);
+          connect_c.N = GBN;
 
           //fill out state of ConnectionToStateMapping
           ConnectionToStateMapping<TCPState> new_cs(request.connection, Time(), connect_c, false);
@@ -464,6 +492,7 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 
           //generate new state
           TCPState accept_c(rand(), LISTEN, TIMERTRIES);
+          accept_c.N = GBN;
 
           //fill out state of ConnectionToStateMapping
           ConnectionToStateMapping<TCPState> new_cs(request.connection, Time(), accept_c, false);
@@ -478,26 +507,85 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
         }
         break;
 
-      case WRITE:
-        cout << "Current state: WRITE" << endl;
+      case WRITE: {
+          cout << "Current state: WRITE" << endl;
 
-        //make sure there's a pre-existing connection and state is ESTABLISHED
-        if (cs!=clist.end() && state == ESTABLISHED) {
-          //stick data in buffer
+          //make sure there's a pre-existing connection and state is ESTABLISHED
+          if (cs!=clist.end() && state == ESTABLISHED) {
+
+            /*PUT DATA IN BUFFER */
+            //stick data in buffer
+            //overflow case
+            sendbuf_space = (*cs).state.TCP_BUFFER_SIZE - (*cs).state.SendBuffer.GetSize();
+            if(sendbuf_space < request.bytes) {
+              (*cs).state.SendBuffer.AddBack(request.data.ExtractFront(sendbuf_space));
+              
+              cout << "Only " << sendbuf_space << " bytes out of " << request.bytes << " able to fit in send buffer." << endl;
+            
+              //response fields
+              response.bytes = sendbuf_space;
+              response.error = EBUF_SPACE;
+            }
+            //no overflow
+            else {
+              (*cs).state.SendBuffer.AddBack(request.data);
+              //response fields
+              response.bytes = request.bytes;
+              response.error = EOK;
+            }
+
+            //send response to socket
+            response.type = STATUS;
+            response.connection = request.connection;
+            MinetSend(sock, response); 
+
+            /* NOW SEND STUFF FROM THE BUFFER */
+            //we'll send N packets worth and have establish send the rest
+            //right now just one packet
+            //if sendbuffer contents is less than mss, send everything
+
+            //six cases on what the segment size should be
+            int rwnd = (*cs).state.GetRwnd();
+            size_t sendbuf_size = (*cs).state.SendBuffer.GetSize();
+            //send < mss < rwnd
+            //send < rwnd < mss
+            if((sendbuf_size < MSS && MSS << rwnd) || (sendbuf_size < rwnd && rwnd < MSS)){
+              ret_p.payload = (*cs).state.SendBuffer.ExtractFront(sendbuf_size);
+              (*cs).state.SetLastSent((*cs).state.GetLastSent + sendbuf_size);
+              MakePacket(ret_p, cs, SEND_ACK, sendbuf_size);
+
+            }
+            //mss < rwnd < semd
+            //mss < send < rwmd
+            else if((MSS < rwnd && rwnd << sendbuf_size) || (MSS < sendbuf_size && sendbuf_size < rwnd)){
+              ret_p.payload = (*cs).state.SendBuffer.ExtractFront(MSS);
+              (*cs).state.SetLastSent((*cs).state.GetLastSent + MSS);
+              MakePacket(ret_p, cs, SEND_ACK, MSS);
+            }
+            //rwnd < mss < sendbuf
+            //rwnd < sendbuf < mss
+            else {
+              ret_p.payload = (*cs).state.SendBuffer.ExtractFront(rwnd);
+              (*cs).state.SetLastSent((*cs).state.GetLastSent + rwnd);
+              MakePacket(ret_p, cs, SEND_ACK, rwnd);
+            }
+
+            MinetSend(mux, ret_p);
+
+          }
+          //fail case
+          else {
+            cout << "Write failed. No such connection." << endl;
+            
+            response.type = STATUS;
+            response.connection = request.connection;
+            response.data = request.data;
+            response.bytes = request.bytes;
+            response.error = ENOMATCH;
+            MinetSend(sock, response); 
+          }
 
         }
-        else {
-          cout << "Write failed. No such connection." << endl;
-          
-          response.type = STATUS;
-          response.connection = request.connection;
-          response.data = request.data;
-          response.bytes = request.bytes;
-          response.error = ENOMATCH;
-          MinetSend(sock, response); 
-        }
-
-
         break;
 
       case FORWARD:
@@ -557,6 +645,8 @@ void MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned i
   ret_tcph.SetDestPort(cs.connection.destport, ret_p);
   ret_tcph.SetSeqNum(cs.state.GetLastSent(), ret_p);
   ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH/4, ret_p);
+  ret_tcph.SetAckNum(cs.state.GetLastRecvd()+1, ret_p); 
+
 
   //tell other guy what our receive window is
   unsigned short our_window = cs.state.TCP_BUFFER_SIZE - cs.state.RecvBuffer.GetSize();
@@ -567,22 +657,20 @@ void MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned i
   switch(cmd) {
 
     case SEND_SYN:
+      ret_tcph.SetAckNum(0, ret_p); 
       SET_SYN(my_flags);
       break;
 
     case SEND_SYNACK:
-      ret_tcph.SetAckNum(cs.state.GetLastRecvd()+1, ret_p); 
       SET_SYN(my_flags);
       SET_ACK(my_flags);
       break;
 
     case SEND_ACK:
-      ret_tcph.SetAckNum(cs.state.GetLastRecvd()+1, ret_p); 
       SET_ACK(my_flags);
       break;
 
     case SEND_FIN:
-      ret_tcph.SetAckNum(cs.state.GetLastRecvd()+1, ret_p); 
       SET_FIN(my_flags);
       break;
   }
