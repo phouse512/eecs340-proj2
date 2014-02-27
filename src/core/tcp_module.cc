@@ -32,6 +32,7 @@ void MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned i
 #define SEND_SYN 1
 #define SEND_SYNACK 2
 #define SEND_ACK 3
+#define SEND_FIN 4
 
 //timertries set to 3, rfc default
 #define TIMERTRIES 3
@@ -527,7 +528,7 @@ void MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned i
   ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH/4, ret_p);
 
   //tell other guy what our receive window is
-  unsigned short our_window = TCP_BUFFER_SIZE - cs.RecvBuffer.GetSize();
+  unsigned short our_window = cs.state.TCP_BUFFER_SIZE - cs.state.RecvBuffer.GetSize();
   ret_tcph.SetWinSize(our_window, ret_p);
 
   //flags and non-common settings
@@ -547,6 +548,11 @@ void MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned i
     case SEND_ACK:
       ret_tcph.SetAckNum(cs.state.GetLastRecvd()+1, ret_p); 
       SET_ACK(my_flags);
+      break;
+
+    case SEND_FIN:
+      ret_tcph.SetAckNum(cs.state.GetLastRecvd()+1, ret_p); 
+      SET_FIN(my_flags);
       break;
   }
   ret_tcph.SetFlags(my_flags, ret_p);
