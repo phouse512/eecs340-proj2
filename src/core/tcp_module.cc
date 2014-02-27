@@ -23,9 +23,10 @@ using std::endl;
 using std::cerr;
 using std::string;
 
+void TimeHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<TCPState> &clist);
 void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<TCPState> &clist);
 void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<TCPState> &clist);
-Packet MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsigned short data_len);
+void MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsigned short data_len);
 
 //for the making of packets
 #define SEND_SYN 1
@@ -34,6 +35,12 @@ Packet MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned
 
 //timertries set to 3, rfc default
 #define TIMERTRIES 3
+
+//estimated rtt
+#define RTT 2
+
+//timeout length
+#define TIMEOUT 5
 
 int main(int argc, char *argv[])
 {
@@ -61,14 +68,17 @@ int main(int argc, char *argv[])
 
   MinetEvent event;
 
-  while (MinetGetNextEvent(event)==0) {
+  while (MinetGetNextEvent(event, TIMEOUT)==0) {
     cout << "****************NEW EVENT*******************" << endl;
     // if we received an unexpected type of event, print error
-    if (event.eventtype!=MinetEvent::Dataflow 
-	|| event.direction!=MinetEvent::IN) {
+    if (event.eventtype!=MinetEvent::Dataflow || event.direction!=MinetEvent::IN) {
       MinetSendToMonitor(MinetMonitoringEvent("Unknown event ignored."));
     // if we received a valid event from Minet, do processing
-    } else {
+    } 
+    else {
+      if (event.eventtype == MinetEvent::Timeout) {
+        TimeHandler(mux, sock, clist);
+      }
       //  Data from the IP layer below  //
       if (event.handle==mux) {
       	MuxHandler(mux, sock, clist);
@@ -134,6 +144,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   cout << "Incoming data has length " << data_len << endl;
   data = p.GetPayload().ExtractFront(data_len);
   data.Print(cout);
+  cout << endl;
 
   //fill out a blank reference connection object
   Connection c;
@@ -154,10 +165,8 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   tcph.GetAckNum(acknum);
   cout << "Incoming tcp header: " << endl;
   tcph.Print(cout);
+  tcph << endl;
   // tcph.GetWinSize();
-
-  cout << "Incoming seqnum is " << seqnum << endl;
-  cout << "Incoming acknum is " << acknum << endl;
 
   //find ConnectionToStateMapping in list
   ConnectionList<TCPState>::iterator cs = clist.FindMatching(c);
@@ -193,11 +202,13 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           (*cs).state.SetLastSent(rand());
           //(*cs).state.SetSendRwnd(SYN_RCVD); 
           (*cs).state.SetLastRecvd(seqnum); //no data in syn packet
+
+          //timers
+          (*cs).bTmrActive = true;
+          (*cs).timeout = Time()+RTT;
   
           //make return packet
           MakePacket(ret_p, *cs, SEND_SYNACK, 0);
-                  //MakePacket(out_p, *cs, 0, 3);
-
 
           //use minetSend for above packet and mux
           MinetSend(mux, ret_p);
@@ -207,22 +218,26 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
       case SYN_RCVD:
         // Necessary conditions to move into ESTABLISHED: 
-        // SYN bit not set, ACK bit set, seqnum == client_isn+1, ack == server_isn+1
+        // SYN bit not set, ACK bit set, ack == server_isn+1
         cout << "Current state: SYN_RCVD" << endl;
         if(IS_SYN(flags)==false 
            && IS_ACK(flags)==true
-        //   && seqnum==(*cs).state.GetLastRecvd()+1 
            && acknum==(*cs).state.GetLastSent()+1) {
+
+          //turn off timer
+          (*cs).bTmrActive = false;
 
           //update state
           (*cs).state.SetState(ESTABLISHED);
           cout << "set state to estab in synrcvd" << endl;
 
-          //(*cs).state.SetTimerTries(SYN_RCVD);
-          (*cs).state.SetLastAcked(acknum-1);
+          (*cs).state.SetTimerTries(TIMERTRIES);
+          (*cs).state.SetLastAcked(acknum-1);          
           //(*cs).state.SetLastSent(my_seqnum);
           //(*cs).state.SetSendRwnd(SYN_RCVD);
-          //(*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
+
+          /*ADD IN CASE FROM ESTABLISHED IF THERE IS DATA */
+          (*cs).state.SetLastRecvd(seqnum, data_len); 
 
           //send a STATUS to the socket indicating connection
           response.type = WRITE;
@@ -230,12 +245,42 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           response.error = EOK;
           response.bytes = 0;
           MinetSend(sock, response);        
-       }
+        }
 
         break;
 
       case SYN_SENT:
         cout << "Current state: SYN_SENT" << endl;
+        if(IS_SYN(flags)==true 
+           && IS_ACK(flags)==true
+           && acknum==(*cs).state.GetLastSent()+1) {
+
+          //reset timer
+          (*cs).timeout = Time()+RTT;
+          (*cs).state.SetTimerTries(TIMERTRIES);
+
+          //update state
+          (*cs).state.SetState(ESTABLISHED);
+          cout << "set state to estab in synsent" << endl;
+
+          (*cs).state.SetLastAcked(acknum-1);          
+          (*cs).state.SetLastSent((*cs).state.GetLastSent()+1); //no payload
+
+          //(*cs).state.SetSendRwnd(SYN_RCVD);
+          (*cs).state.SetLastRecvd(seqnum, data_len); //should be no data
+
+          //make return packet
+          MakePacket(ret_p, *cs, SEND_ACK, 0);
+          //use minetSend for above packet and mux
+          MinetSend(mux, ret_p);
+
+          //send a STATUS to the socket indicating connection
+          response.type = WRITE;
+          response.connection = c;
+          response.error = EOK;
+          response.bytes = 0;
+          MinetSend(sock, response);        
+        }        
         break;
 
       case ESTABLISHED:
@@ -251,6 +296,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
           /* FORWARD DATA TO SOCKET */
           //stick data in receive buffer
+          //stick as much in response as possible
           (*cs).state.RecvBuffer.AddBack(data);
           response.type = WRITE;
           response.connection = c;
@@ -258,37 +304,44 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           response.bytes = (*cs).state.RecvBuffer.GetSize();
           response.error = EOK;
           MinetSend(sock, response);
-        }
-
-          /* ACK PACKET - IMPLEMENT AFTER TIMERS ARE IN? */
-
-        //update state
-        if(IS_ACK(flags)){
-            (*cs).state.SetLastAcked(acknum-1);
-        }
-
-        //no payload
-        (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);
-        (*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
-
-        MakePacket(ret_p, *cs, SEND_ACK, 0);
-                  //MakePacket(out_p, *cs, 0, 2);
-        MinetSend(mux, ret_p);
-
-                //(*cs).state.SetTimerTries(SYN_RCVD);
-
-          //(*cs).state.SetSendRwnd(SYN_RCVD);
         
-        break;
+          //update ack if there was one
+          if(IS_ACK(flags)){
+              (*cs).state.SetTimerTries(TIMERTRIES);
+              (*cs).state.SetLastAcked(acknum-1);
+          }
 
-      case SEND_DATA:
-        cout << "Current state: SEND_DATA" << endl;
+          (*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
+            
+          //(*cs).state.SetSendRwnd(SYN_RCVD);
 
+          //no payload in what we're sending
+          (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);
+
+          MakePacket(ret_p, *cs, SEND_ACK, 0);
+          MinetSend(mux, ret_p);
+
+        }        
+        else if (IS_FIN(flags)) {
+          //no payload
+          (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);          
+          (*cs).state.SetState(CLOSE_WAIT);
+          (*cs).state.SetLastRecvd(seqnum);
+
+          MakePacket(ret_p, *cs, SEND_ACK, 0);
+          MinetSend(mux, ret_p);
+        }
         break;
 
       case CLOSE_WAIT:
         cout << "Current state: CLOSE_WAIT" << endl;
+        //no payload
+        (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);        
+        (*cs).state.SetState(LAST_ACK);
+        (*cs).state.SetLastRecvd(seqnum);
 
+        MakePacket(ret_p, *cs, SEND_FIN, 0);
+        MinetSend(mux, ret_p);
         break;
 
       case FIN_WAIT1:
@@ -302,6 +355,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         break;
 
       case LAST_ACK:
+            //HOW DOES IT GET HERE
         cout << "Current state: LAST_ACK" << endl;
 
         break;
@@ -330,9 +384,6 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
     //variables
     SockRequestResponse request;
     SockRequestResponse response;
-    //ConnectionToStateMapping<TCPState> new_cs;
-    //unsigned int initial_seq_num;
-    //TCPState accept_c; //the new state we add to the list
     Packet ret_p;
 
     //grab request from socket
@@ -344,44 +395,35 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
     //switch based on what socket wants to do
     switch(request.type){
 
-      case CONNECT:
-              cout << "Current state: CONNECT" << endl;
+      case CONNECT: {
+          cout << "Current state: CONNECT" << endl;
 
-        // cout << "attempting to add a new connection :(" << endl;
-        // /* ADD A NEW CONNECT CONNECTION */
+          //generate new state
+          TCPState connect_c(rand(), SYN_SENT, TIMERTRIES);
 
-        // // first initialize the ConnectionToStateMapping
-        // //Create a new accept connection - will start at SYN_sent
-        // //the new connection is what's specified by the request from the socket
-        // new_cs.connection = request.connection;
+          //fill out state of ConnectionToStateMapping
+          ConnectionToStateMapping<TCPState> new_cs(request.connection, Time(), connect_c, false);
 
-        // //generate new state
-        // //implement timertries eventually, right now set to 1?
-        // timertries = 1;
-        // initial_seq_num = rand();
-        // accept_c = TCPState(initial_seq_num, SYN_SENT, timertries);
-        
-        // //fill out state of ConnectionToStateMapping
-        // new_cs.state = accept_c;
+          //add new ConnectionToStateMapping to list
+          clist.push_front(new_cs);
 
-        // //set state
-        // new_cs.state.SetLastSent(initial_seq_num);
-        // //(*cs).state.SetSendRwnd(SYN_RCVD);
+          //set state
+          //new_cs.state.SetLastSent(initial_seq_num);
+          //(*cs).state.SetSendRwnd(SYN_RCVD);
 
+          //add new ConnectionToStateMapping to list
+          clist.push_front(new_cs);
 
-        // //add new ConnectionToStateMapping to list
-        // clist.push_front(new_cs);
+          //send SYN packet
+          MakePacket(ret_p, new_cs, SEND_SYN, 0);
+          MinetSend(mux, ret_p);
 
-        // //send SYN packet
-        // ret_p = MakePacket(new_cs, SEND_SYN, 0);
-        // MinetSend(mux, ret_p);
-
-        // //send a STATUS to the socket with only error code set
-
-        // response.type = STATUS;
-        // response.error = EOK;
-        // MinetSend(sock, response);    
-
+          //send a STATUS to the socket with only error code set
+          response.bytes = 0;
+          response.type = STATUS;
+          response.error = EOK;
+          MinetSend(sock, response);    
+        }
         break;
 
       case ACCEPT: {
@@ -406,6 +448,23 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 
       case WRITE:
         cout << "Current state: WRITE" << endl;
+
+        //make sure there's a pre-existing connection and state is ESTABLISHED
+        if (cs!=clist.end() && state == ESTABLISHED) {
+          //stick data in buffer
+
+        }
+        else {
+          cout << "Write failed. No such connection." << endl;
+          
+          response.type = STATUS;
+          response.connection = request.connection;
+          response.data = request.data;
+          response.bytes = request.bytes;
+          response.error = ENOMATCH;
+          MinetSend(sock, response); 
+        }
+
 
         break;
 
@@ -466,7 +525,10 @@ void MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned i
   ret_tcph.SetDestPort(cs.connection.destport, ret_p);
   ret_tcph.SetSeqNum(cs.state.GetLastSent(), ret_p);
   ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH/4, ret_p);
-  ret_tcph.SetWinSize(14600, ret_p);
+
+  //tell other guy what our receive window is
+  unsigned short our_window = TCP_BUFFER_SIZE - cs.RecvBuffer.GetSize();
+  ret_tcph.SetWinSize(our_window, ret_p);
 
   //flags and non-common settings
   unsigned char my_flags = 0;
@@ -478,7 +540,6 @@ void MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned i
 
     case SEND_SYNACK:
       ret_tcph.SetAckNum(cs.state.GetLastRecvd()+1, ret_p); 
-
       SET_SYN(my_flags);
       SET_ACK(my_flags);
       break;
@@ -495,9 +556,31 @@ void MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned i
 
   //print header stats
   ret_tcph.Print(cout);
+  cout << endl;
 
   //make sure ip header is in front
   ret_p.PushBackHeader(ret_tcph);
 
 }
 
+void TimeHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<TCPState> &clist){
+
+  //get current time
+  Time current_time = Time();
+  //loop through connections to check for timeouts
+  for(ConnectionList<TCPState>::iterator cs = clist.begin(); cs!=clist.end(); cs++) {
+    //check the ones that have their timers active
+    if((*cs).bTmrActive == true && (*cs).timeout < current_time){
+      //if tried three times, kill
+      //remember expire timer tries decrements and returns true if zero
+      if((*cs).state.ExpireTimerTries()){
+        //close the connection
+        //does this mean setting it to close?
+      }
+
+
+    }
+
+  }//for
+
+}
