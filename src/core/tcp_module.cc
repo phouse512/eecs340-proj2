@@ -43,12 +43,11 @@ void MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned i
 //timeout length
 #define TIMEOUT 10
 
-//GBN window initial value
-#define GBN 5
-
-
 //max size of segment in bytes
 #define MSS 536
+
+//gbn max size in bytes
+#define GBN MSS*5
 
 int main(int argc, char *argv[])
 {
@@ -328,13 +327,13 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           //overflow
           if(our_window < data_len) {
             (*cs).state.RecvBuffer.AddBack(data.ExtractFront(our_window));
-            (*cs).state.SetLastRecvd(seqnum, our_window); 
+            (*cs).state.SetLastRecvd(seqnum + our_window - 1); 
             cout << "Only " << our_window << " bytes out of " << data_len << " able to fit in receive buffer." << endl;
           }
           //no overflow
           else {
             (*cs).state.RecvBuffer.AddBack(data);
-            (*cs).state.SetLastRecvd(seqnum, data_len); 
+            (*cs).state.SetLastRecvd(seqnum + data_len - 1); 
           }
 
           //assumes a srr can fit an entire receive buffer...
@@ -367,7 +366,10 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
           MakePacket(ret_p, *cs, SEND_ACK, 0);
           MinetSend(mux, ret_p);
-
+./struct $
+{
+  /* data */
+};
         }        
         // else if (IS_ACK(flags)) {
         //   //no payload, only an ack
@@ -459,7 +461,6 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 
           //generate new state
           TCPState connect_c(rand(), SYN_SENT, TIMERTRIES);
-          connect_c.N = GBN;
 
           //fill out state of ConnectionToStateMapping
           ConnectionToStateMapping<TCPState> new_cs(request.connection, Time(), connect_c, false);
@@ -492,7 +493,6 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 
           //generate new state
           TCPState accept_c(rand(), LISTEN, TIMERTRIES);
-          accept_c.N = GBN;
 
           //fill out state of ConnectionToStateMapping
           ConnectionToStateMapping<TCPState> new_cs(request.connection, Time(), accept_c, false);
@@ -544,6 +544,8 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
             //right now just one packet
             //if sendbuffer contents is less than mss, send everything
 
+            while()
+
             //six cases on what the segment size should be
             int rwnd = (*cs).state.GetRwnd();
             size_t sendbuf_size = (*cs).state.SendBuffer.GetSize();
@@ -551,7 +553,7 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
             //send < rwnd < mss
             if((sendbuf_size < MSS && MSS << rwnd) || (sendbuf_size < rwnd && rwnd < MSS)){
               ret_p = Packet((*cs).state.SendBuffer.ExtractFront(sendbuf_size));
-              (*cs).state.SetLastSent((*cs).state.GetLastSent + sendbuf_size);
+              (*cs).state.SetLastSent((*cs).state.GetLastSent() + sendbuf_size);
               MakePacket(ret_p, *cs, SEND_ACK, sendbuf_size);
 
             }
@@ -559,14 +561,14 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
             //mss < send < rwmd
             else if((MSS < rwnd && rwnd << sendbuf_size) || (MSS < sendbuf_size && sendbuf_size < rwnd)){
               ret_p = Packet((*cs).state.SendBuffer.ExtractFront(MSS));
-              (*cs).state.SetLastSent((*cs).state.GetLastSent + MSS);
+              (*cs).state.SetLastSent((*cs).state.GetLastSent() + MSS);
               MakePacket(ret_p, *cs, SEND_ACK, MSS);
             }
             //rwnd < mss < sendbuf
             //rwnd < sendbuf < mss
             else {
               ret_p = Packet((*cs).state.SendBuffer.ExtractFront(rwnd));
-              (*cs).state.SetLastSent((*cs).state.GetLastSent + rwnd);
+              (*cs).state.SetLastSent((*cs).state.GetLastSent() + rwnd);
               MakePacket(ret_p, *cs, SEND_ACK, rwnd);
             }
 
@@ -709,3 +711,32 @@ void TimeHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
   }//for
 
 }
+
+
+            // //six cases on what the segment size should be
+            // int rwnd = (*cs).state.GetRwnd();
+            // size_t sendbuf_size = (*cs).state.SendBuffer.GetSize();
+            // //send < mss < rwnd
+            // //send < rwnd < mss
+            // if((sendbuf_size < MSS && MSS << rwnd) || (sendbuf_size < rwnd && rwnd < MSS)){
+            //   ret_p = Packet((*cs).state.SendBuffer.ExtractFront(sendbuf_size));
+            //   (*cs).state.SetLastSent((*cs).state.GetLastSent() + sendbuf_size);
+            //   MakePacket(ret_p, *cs, SEND_ACK, sendbuf_size);
+
+            // }
+            // //mss < rwnd < semd
+            // //mss < send < rwmd
+            // else if((MSS < rwnd && rwnd << sendbuf_size) || (MSS < sendbuf_size && sendbuf_size < rwnd)){
+            //   ret_p = Packet((*cs).state.SendBuffer.ExtractFront(MSS));
+            //   (*cs).state.SetLastSent((*cs).state.GetLastSent() + MSS);
+            //   MakePacket(ret_p, *cs, SEND_ACK, MSS);
+            // }
+            // //rwnd < mss < sendbuf
+            // //rwnd < sendbuf < mss
+            // else {
+            //   ret_p = Packet((*cs).state.SendBuffer.ExtractFront(rwnd));
+            //   (*cs).state.SetLastSent((*cs).state.GetLastSent() + rwnd);
+            //   MakePacket(ret_p, *cs, SEND_ACK, rwnd);
+            // }
+
+            // MinetSend(mux, ret_p);
