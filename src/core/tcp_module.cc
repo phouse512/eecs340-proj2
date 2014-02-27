@@ -87,7 +87,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
   /* VARIABLES */
   //packet and headers
   Packet p;
-  //Packet out_p;
+  Packet ret_p;
   TCPHeader tcph;
   IPHeader iph;
   unsigned tcphlen_est;
@@ -195,7 +195,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           (*cs).state.SetLastRecvd(seqnum); //no data in syn packet
   
           //make return packet
-          ret_p = MakePacket(*cs, SEND_SYNACK, 0);
+          MakePacket(ret_p, *cs, SEND_SYNACK, 0);
                   //MakePacket(out_p, *cs, 0, 3);
 
 
@@ -271,7 +271,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);
         (*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
 
-        ret_p=MakePacket(*cs, SEND_ACK, 0);
+        MakePacket(ret_p, *cs, SEND_ACK, 0);
                   //MakePacket(out_p, *cs, 0, 2);
         MinetSend(mux, ret_p);
 
@@ -449,9 +449,8 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 }//sockhandler
 
 /* THIS FUNCTION ASSSUMES STATE HAS ALREADY BEEN UPDATED */
-Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsigned short data_len) {
+void MakePacket(Packet &ret_p, ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsigned short data_len) {
     /* MAKE PACKET */
-  Packet ret_p;
 
   /* MAKE IP HEADER */
   IPHeader ret_iph;
