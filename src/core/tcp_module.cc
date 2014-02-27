@@ -441,7 +441,7 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 
           //generate new state
           TCPState connect_c(rand(), SYN_SENT, TIMERTRIES);
-          connect_c.state.N = 0;
+          connect_c.N = 0;
 
           //fill out state of ConnectionToStateMapping
           ConnectionToStateMapping<TCPState> new_cs(request.connection, Time(), connect_c, false);
@@ -474,7 +474,7 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 
           //generate new state
           TCPState accept_c(rand(), LISTEN, TIMERTRIES);
-          accept_c.state = 0;
+          accept_c.N = 0;
 
           //fill out state of ConnectionToStateMapping
           ConnectionToStateMapping<TCPState> new_cs(request.connection, Time(), accept_c, false);
@@ -567,22 +567,22 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
               }
 
               MinetSend(mux, ret_p);
-            }
+            }//while
+          
             //update N
             (*cs).state.N = n;
-
+          }
             //fail case
-            else {
-              cout << "Write failed. No such connection." << endl;
-              
-              response.type = STATUS;
-              response.connection = request.connection;
-              response.data = request.data;
-              response.bytes = request.bytes;
-              response.error = ENOMATCH;
-              MinetSend(sock, response); 
-            }
-          }//while
+          else {
+            cout << "Write failed. No such connection." << endl;
+            
+            response.type = STATUS;
+            response.connection = request.connection;
+            response.data = request.data;
+            response.bytes = request.bytes;
+            response.error = ENOMATCH;
+            MinetSend(sock, response); 
+          }
         }
         break;
 
