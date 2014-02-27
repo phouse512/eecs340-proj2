@@ -305,7 +305,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         //if there's an ack
         if (IS_ACK(flags)) {
           //wipe send buffer as needed
-          (*cs).state.SendBuffer.Erase(0, acknum - (*cs).state.GetLastAcked - 1);
+          (*cs).state.SendBuffer.Erase(0, acknum - (*cs).state.GetLastAcked() - 1);
 
           (*cs).state.SetLastAcked(acknum-1);
           //will be overwritten if there was a payload
@@ -550,24 +550,24 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
             //send < mss < rwnd
             //send < rwnd < mss
             if((sendbuf_size < MSS && MSS << rwnd) || (sendbuf_size < rwnd && rwnd < MSS)){
-              ret_p.payload = (*cs).state.SendBuffer.ExtractFront(sendbuf_size);
+              ret_p = Packet((*cs).state.SendBuffer.ExtractFront(sendbuf_size));
               (*cs).state.SetLastSent((*cs).state.GetLastSent + sendbuf_size);
-              MakePacket(ret_p, cs, SEND_ACK, sendbuf_size);
+              MakePacket(ret_p, *cs, SEND_ACK, sendbuf_size);
 
             }
             //mss < rwnd < semd
             //mss < send < rwmd
             else if((MSS < rwnd && rwnd << sendbuf_size) || (MSS < sendbuf_size && sendbuf_size < rwnd)){
-              ret_p.payload = (*cs).state.SendBuffer.ExtractFront(MSS);
+              ret_p = Packet((*cs).state.SendBuffer.ExtractFront(MSS));
               (*cs).state.SetLastSent((*cs).state.GetLastSent + MSS);
-              MakePacket(ret_p, cs, SEND_ACK, MSS);
+              MakePacket(ret_p, *cs, SEND_ACK, MSS);
             }
             //rwnd < mss < sendbuf
             //rwnd < sendbuf < mss
             else {
-              ret_p.payload = (*cs).state.SendBuffer.ExtractFront(rwnd);
+              ret_p = Packet((*cs).state.SendBuffer.ExtractFront(rwnd));
               (*cs).state.SetLastSent((*cs).state.GetLastSent + rwnd);
-              MakePacket(ret_p, cs, SEND_ACK, rwnd);
+              MakePacket(ret_p, *cs, SEND_ACK, rwnd);
             }
 
             MinetSend(mux, ret_p);
