@@ -237,12 +237,16 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
       case ESTABLISHED:
         cout << "Current state: ESTABLISHED" << endl;
 
-        //if there is data
-        if(data_len!=0){
+        //things we need to check
+          //is there data
+          //is there an ack
+          //is there a close
 
-        
+        //if there is data
+        if(data_len!=0){     
 
           /* FORWARD DATA TO SOCKET */
+          //stick data in receive buffer
           (*cs).state.RecvBuffer.AddBack(data);
           response.type = WRITE;
           response.connection = c;
@@ -250,19 +254,24 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           response.bytes = (*cs).state.RecvBuffer.GetSize();
           response.error = EOK;
           MinetSend(sock, response);
+        }
 
           /* ACK PACKET - IMPLEMENT AFTER TIMERS ARE IN? */
 
-          //update state
-          //(*cs).state.SetState(ESTABLISHED);
-          //(*cs).state.SetTimerTries(SYN_RCVD);
-          if(IS_ACK(flags)){
+        //update state
+        if(IS_ACK(flags)){
             (*cs).state.SetLastAcked(acknum-1);
-          }
-          //(*cs).state.SetLastSent(my_seqnum);
-          //(*cs).state.SetSendRwnd(SYN_RCVD);
-          (*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
         }
+
+        //no payload
+        (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);
+        (*cs).state.SetLastRecvd(seqnum, data_len); //account for length of data
+
+        MakePacket(*cs, SEND_ACK, 0);
+                //(*cs).state.SetTimerTries(SYN_RCVD);
+
+          //(*cs).state.SetSendRwnd(SYN_RCVD);
+        
         break;
 
       case SEND_DATA:
@@ -322,7 +331,8 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
     //grab request from socket
     MinetReceive(sock, request);
 
-    //ConnectionList<TCPState>::iterator cs = clist.FindMatching(c);
+    ConnectionList<TCPState>::iterator cs = clist.FindMatching(request.connection);
+    unsigned int state = (*cs).state.GetState();
 
     //switch based on what socket wants to do
     switch(request.type){
@@ -405,6 +415,27 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
       case STATUS:
         cout << "Current state: STATUS" << endl;
 
+        //if established, we need to check if everything was read
+        //from the buffer and then wipe it so it stops reading from it
+        if(state == ESTABLISHED){
+          //check if everything from buffer was read
+          cout << request.bytes << " out of " << (*cs).state.RecvBuffer.GetSize() << " read." << endl;
+          if(request.bytes == (*cs).state.RecvBuffer.GetSize()){
+            cout << "All data written to socket." << endl;
+            (*cs).state.RecvBuffer.Clear(); 
+          }
+          else{
+            cout << "Rewriting data to socket." << endl;
+            (*cs).state.RecvBuffer.Erase(0, request.bytes); 
+            response.type = WRITE;
+            response.connection = request.connection;
+            response.data = (*cs).state.RecvBuffer;
+            response.bytes = (*cs).state.RecvBuffer.GetSize();
+            response.error = EOK;
+            MinetSend(sock, response);   
+          }
+        }
+
         break;
 
     }//switch
@@ -429,7 +460,7 @@ Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsig
   ret_tcph.SetDestPort(cs.connection.destport, ret_p);
   ret_tcph.SetSeqNum(cs.state.GetLastSent(), ret_p);
   ret_tcph.SetHeaderLen(TCP_HEADER_BASE_LENGTH/4, ret_p);
-  // ret_tcph.SetWinSize(0, ret_p);
+  ret_tcph.SetWinSize(14600, ret_p);
 
   //flags and non-common settings
   unsigned char my_flags = 0;
@@ -437,7 +468,6 @@ Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsig
 
     case SEND_SYN:
       SET_SYN(my_flags);
-      ret_tcph.SetFlags(my_flags, ret_p);
       break;
 
     case SEND_SYNACK:
@@ -445,9 +475,14 @@ Packet MakePacket(ConnectionToStateMapping<TCPState> cs, unsigned int cmd, unsig
 
       SET_SYN(my_flags);
       SET_ACK(my_flags);
-      ret_tcph.SetFlags(my_flags, ret_p);
+      break;
+
+    case SEND_ACK:
+      ret_tcph.SetAckNum(cs.state.GetLastRecvd()+1, ret_p); 
+      SET_ACK(my_flags);
       break;
   }
+  ret_tcph.SetFlags(my_flags, ret_p);
 
   //recompute checksum with headers in
   ret_tcph.RecomputeChecksum(ret_p);
