@@ -465,8 +465,8 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         if (IS_ACK(flags)){
           // doesn't need any packet sending data
           (*cs).state.SetState(FIN_WAIT2);
-          (*cs).SetLastAcked(acknum);
-          (*cs).SetLastRecvd(seqnum);
+          (*cs).state.SetLastAcked(acknum);
+          (*cs).state.SetLastRecvd(seqnum);
         } else if (IS_FIN(flags)){
           (*cs).state.SetState(CLOSING);
           
@@ -481,9 +481,9 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           MinetSend(mux, ret_p);
 
           response.type = WRITE;
-          response.connectoin = c;
+          response.connection = c;
           response.error = EOK;
-          resonse.bytes = 0;
+          response.bytes = 0;
           MinetSend(sock, response);
         }
         break;
