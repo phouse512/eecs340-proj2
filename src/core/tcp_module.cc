@@ -448,12 +448,6 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
         MakePacket(ret_p, *cs, SEND_FIN, 0);
         MinetSend(mux, ret_p);
-
-        response.type = WRITE;
-        response.connection = c;
-        response.error = EOK;
-        response.bytes = 0;
-        MinetSend(sock, response);
         break;
 
       case FIN_WAIT1:
@@ -465,13 +459,14 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         if (IS_ACK(flags)){
           // doesn't need any packet sending data
           (*cs).state.SetState(FIN_WAIT2);
-          (*cs).state.SetLastAcked(acknum);
+          (*cs).state.SetLastAcked(acknum - 1);
           (*cs).state.SetLastRecvd(seqnum);
-        } else if (IS_FIN(flags)){
+        } 
+        else if (IS_FIN(flags)){
           (*cs).state.SetState(CLOSING);
           
           (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);
-          (*cs).state.SetLastRecvd(seqnum, data_len);
+          (*cs).state.SetLastRecvd(seqnum);
 
           (*cs).timeout = Time()+RTT;
           (*cs).bTmrActive = true;
@@ -479,12 +474,6 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
           MakePacket(ret_p, *cs, SEND_ACK, 0);
           MinetSend(mux, ret_p);
-
-          response.type = WRITE;
-          response.connection = c;
-          response.error = EOK;
-          response.bytes = 0;
-          MinetSend(sock, response);
         }
         break;
 
@@ -494,7 +483,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         if (IS_ACK(flags))
         {
           (*cs).state.SetState(TIME_WAIT);
-          (*cs).state.SetLastAcked(acknum);
+          (*cs).state.SetLastAcked(acknum-1);
           (*cs).state.SetLastRecvd(seqnum);
         }
         break;
@@ -507,7 +496,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         if (IS_ACK(flags))
         {
           (*cs).state.SetState(CLOSED);
-          (*cs).state.SetLastAcked(acknum);
+          (*cs).state.SetLastAcked(acknum-1);
           (*cs).state.SetLastRecvd(seqnum);
           
         }   
@@ -522,7 +511,7 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
 
           (*cs).state.SetLastAcked(acknum-1);
           (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);
-          (*cs).state.SetLastRecvd(seqnum, data_len);
+          (*cs).state.SetLastRecvd(seqnum);
 
           (*cs).timeout = Time()+RTT;
           (*cs).bTmrActive = true;
@@ -532,18 +521,20 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
           MakePacket(ret_p, *cs, SEND_ACK, 0);
           MinetSend(mux, ret_p);
 
-          response.type = WRITE;
-          response.connection = c;
-          response.error = EOK;
-          response.bytes = 0;
-          MinetSend(sock, response);
+          // response.type = WRITE;
+          // response.connection = c;
+          // response.error = EOK;
+          // response.bytes = 0;
+          // MinetSend(sock, response);
         }
 
         break;
 
       case TIME_WAIT:
         cout << "Current state: TIME_WAIT" << endl;
-
+        (*cs).timeout = Time()+30;
+        (*cs).state.SetState(CLOSED);
+        //clist.erase(cs);
         break;
 
 
@@ -733,7 +724,15 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 
       case CLOSE:
         cout << "Current state: CLOSE" << endl;
-
+        if (cs!=clist.end() && (*cs).state.GetState()==ESTABLISHED) {
+          //send FIN packet
+          (*cs).state.SetState(FIN_WAIT1);
+          MakePacket(ret_p, new_cs, SEND_FIN, 0);
+          MinetSend(mux, ret_p);
+        }
+        else{
+          cout << "Improper close command." << endl;
+        }
         break;
 
       case STATUS:
@@ -832,6 +831,11 @@ void TimeHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
   Time current_time = Time();
   //loop through connections to check for timeouts
   for(ConnectionList<TCPState>::iterator cs = clist.begin(); cs!=clist.end(); cs++) {
+    //if closed, remove
+    if((*cs).state.GetState() == CLOSED){
+      cout << "Closing connection." << endl;
+      clist.erase(cs);
+    }
     //check the ones that have their timers active
     if((*cs).bTmrActive == true && (*cs).timeout < current_time){
       //if tried three times, kill
@@ -860,15 +864,50 @@ void TimeHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
             break;
           }
 
-          case FIN_WAIT2: {
-            cout << "Timeout, resend ACK" << endl;
-            //Packet ret_p;
-            //MakePacket(ret_p, *cs, SEND_ACK, 0);
-            //MinetSend(mux, ret_p);
-            //(*cs).timeout = Time()+RTT;
+          case FIN_WAIT1: {
+            cout << "Timeout, resend FIN" << endl;
+            Packet ret_p;
+            MakePacket(ret_p, *cs, SEND_FIN, 0);
+            MinetSend(mux, ret_p);
+            (*cs).timeout = Time()+RTT;
             break;
           }
 
+          case TIME_WAIT: {
+            cout << "Timeout, resend ACK" << endl;
+            Packet ret_p;
+            MakePacket(ret_p, *cs, SEND_ACK, 0);
+            MinetSend(mux, ret_p);
+            (*cs).timeout = Time()+RTT;
+            break;
+          }
+
+          case CLOSE_WAIT: {
+            cout << "Timeout, resend ACK" << endl;
+            Packet ret_p;
+            MakePacket(ret_p, *cs, SEND_ACK, 0);
+            MinetSend(mux, ret_p);
+            (*cs).timeout = Time()+RTT;
+            break;
+          }
+
+          case CLOSING: {
+            cout << "Timeout, resend ACK" << endl;
+            Packet ret_p;
+            MakePacket(ret_p, *cs, SEND_ACK, 0);
+            MinetSend(mux, ret_p);
+            (*cs).timeout = Time()+RTT;
+            break;
+          }
+
+          case LAST_ACK: {
+            cout << "Timeout, resend FIN" << endl;
+            Packet ret_p;
+            MakePacket(ret_p, *cs, SEND_FIN, 0);
+            MinetSend(mux, ret_p);
+            (*cs).timeout = Time()+RTT;
+            break;
+          }
 
           case ESTABLISHED: {
             //go back n resend
