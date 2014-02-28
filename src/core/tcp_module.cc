@@ -727,7 +727,7 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
         if (cs!=clist.end() && (*cs).state.GetState()==ESTABLISHED) {
           //send FIN packet
           (*cs).state.SetState(FIN_WAIT1);
-          MakePacket(ret_p, new_cs, SEND_FIN, 0);
+          MakePacket(ret_p, *cs, SEND_FIN, 0);
           MinetSend(mux, ret_p);
         }
         else{
