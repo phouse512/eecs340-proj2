@@ -860,6 +860,16 @@ void TimeHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
             break;
           }
 
+          case FIN_WAIT2: {
+            cout << "Timeout, resend ACK" << endl;
+            //Packet ret_p;
+            //MakePacket(ret_p, *cs, SEND_ACK, 0);
+            //MinetSend(mux, ret_p);
+            //(*cs).timeout = Time()+RTT;
+            break;
+          }
+
+
           case ESTABLISHED: {
             //go back n resend
             if((*cs).state.N > 0){
