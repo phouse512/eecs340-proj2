@@ -293,84 +293,146 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         }        
         break;
 
-      case ESTABLISHED:
-        cout << "Current state: ESTABLISHED" << endl;
+      case ESTABLISHED: {
+          cout << "Current state: ESTABLISHED" << endl;
 
-        //things we need to check
-          //is there data
-          //is there an ack
-          //is there a close
+          //things we need to check
+            //is there data
+            //is there an ack
+            //is there a close
+          if (IS_FIN(flags)) {
+            //no payload
+            (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);          
+            (*cs).state.SetState(CLOSE_WAIT);
+            (*cs).state.SetLastRecvd(seqnum);
 
-        //if there's an ack
-        if (IS_ACK(flags)) {
-          cout << "Received ack for something we sent." << endl;
-          //wipe send buffer as needed
-          (*cs).state.SendBuffer.Erase(0, acknum - (*cs).state.GetLastAcked() - 1);
-
-          //set n
-          (*cs).state.N = (*cs).state.N - (acknum - (*cs).state.GetLastAcked() - 1);
-
-          (*cs).state.SetLastAcked(acknum-1);
-          //will be overwritten if there was a payload
-          (*cs).state.SetLastRecvd(seqnum);
-
-          //timer reset condition 
-          if((*cs).state.GetLastAcked() == (*cs).state.GetLastSent()) {
-            (*cs).bTmrActive = false;
-            (*cs).state.SetTimerTries(TIMERTRIES);
+            MakePacket(ret_p, *cs, SEND_ACK, 0);
+            MinetSend(mux, ret_p);
           }
-        }
-
-        //if there is data
-        if(data_len!=0){     
-
-          /* FORWARD DATA TO SOCKET */
-          //stick data in receive buffer
-          //check for overflow
-          our_window = (*cs).state.TCP_BUFFER_SIZE - (*cs).state.RecvBuffer.GetSize();
-          //overflow
-          if(our_window < data_len) {
-            (*cs).state.RecvBuffer.AddBack(data.ExtractFront(our_window));
-            (*cs).state.SetLastRecvd(seqnum + our_window - 1); 
-            cout << "Only " << our_window << " bytes out of " << data_len << " able to fit in receive buffer." << endl;
-          }
-          //no overflow
           else {
-            (*cs).state.RecvBuffer.AddBack(data);
-            (*cs).state.SetLastRecvd(seqnum + data_len - 1); 
-          }
+            //if there's an ack
+            if (IS_ACK(flags)) {
+              cout << "Received ack for something we sent." << endl;
+              //wipe send buffer as needed
+              (*cs).state.SendBuffer.Erase(0, acknum - (*cs).state.GetLastAcked() - 1);
 
-          //assumes a srr can fit an entire receive buffer...
-          response.type = WRITE;
-          response.connection = c;
-          response.data = (*cs).state.RecvBuffer;
-          response.bytes = (*cs).state.RecvBuffer.GetSize();
-          response.error = EOK;
-          MinetSend(sock, response);
-        
-          //no payload in what we're sending
-          (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);
+              //set n
+              (*cs).state.N = (*cs).state.N - (acknum - (*cs).state.GetLastAcked() - 1);
 
-          //reset timer
-          if((*cs).bTmrActive == false){
-            (*cs).bTmrActive = true;
-            (*cs).timeout = Time() + RTT;
-          }
+              (*cs).state.SetLastAcked(acknum-1);
+              //will be overwritten if there was a payload
+              (*cs).state.SetLastRecvd(seqnum);
 
-          MakePacket(ret_p, *cs, SEND_ACK, 0);
-          MinetSend(mux, ret_p);
+              //timer reset condition 
+              if((*cs).state.GetLastAcked() == (*cs).state.GetLastSent()) {
+                (*cs).bTmrActive = false;
+                (*cs).state.SetTimerTries(TIMERTRIES);
+              }
+            }
 
-        }        
+            //if there is data
+            if(data_len!=0){     
 
-        else if (IS_FIN(flags)) {
-          //no payload
-          (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);          
-          (*cs).state.SetState(CLOSE_WAIT);
-          (*cs).state.SetLastRecvd(seqnum);
+              /* FORWARD DATA TO SOCKET */
+              //stick data in receive buffer
+              //check for overflow
+              our_window = (*cs).state.TCP_BUFFER_SIZE - (*cs).state.RecvBuffer.GetSize();
+              //overflow
+              if(our_window < data_len) {
+                (*cs).state.RecvBuffer.AddBack(data.ExtractFront(our_window));
+                (*cs).state.SetLastRecvd(seqnum + our_window - 1); 
+                cout << "Only " << our_window << " bytes out of " << data_len << " able to fit in receive buffer." << endl;
+              }
+              //no overflow
+              else {
+                (*cs).state.RecvBuffer.AddBack(data);
+                (*cs).state.SetLastRecvd(seqnum + data_len - 1); 
+              }
 
-          MakePacket(ret_p, *cs, SEND_ACK, 0);
-          MinetSend(mux, ret_p);
-        }
+              //assumes a srr can fit an entire receive buffer...
+              response.type = WRITE;
+              response.connection = c;
+              response.data = (*cs).state.RecvBuffer;
+              response.bytes = (*cs).state.RecvBuffer.GetSize();
+              response.error = EOK;
+              MinetSend(sock, response);
+            
+              //no payload in what we're sending
+              (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);
+
+              //reset timer
+              if((*cs).bTmrActive == false){
+                (*cs).bTmrActive = true;
+                (*cs).timeout = Time() + RTT;
+              }
+
+              MakePacket(ret_p, *cs, SEND_ACK, 0);
+              MinetSend(mux, ret_p);
+
+            }        
+            
+            //if there's extra data in the send buffer
+            if((*cs).state.SendBuffer.GetSize() - (*cs).state.N > 0){
+              /* NOW SEND STUFF FROM THE BUFFER */
+              //we'll send N packets worth and have establish send the rest
+              //GOBACKN
+              //if sendbuffer contents is less than mss, send everything
+              unsigned int n = (*cs).state.N;
+              int rwnd = (*cs).state.GetRwnd();
+              size_t sendbuf_size = (*cs).state.SendBuffer.GetSize();
+              while( n < GBN) {
+
+                //account for increment
+                rwnd = rwnd - n;
+                sendbuf_size = sendbuf_size - n;
+
+                //six cases on what the segment size should be
+                //mss < rwnd < semd
+                //mss < send < rwmd
+                if(
+                  ((MSS < rwnd && rwnd << sendbuf_size) || (MSS < sendbuf_size && sendbuf_size < rwnd))
+                  && (n + MSS < GBN)
+                  ){
+                  ret_p = Packet((*cs).state.SendBuffer.Extract(n, MSS));
+                  (*cs).state.SetLastSent((*cs).state.GetLastSent() + MSS);
+                  n = n + MSS;
+                  MakePacket(ret_p, *cs, SEND_ACK, MSS);
+                }
+                //send < mss < rwnd
+                //send < rwnd < mss
+                else if(
+                  ((sendbuf_size < MSS && MSS << rwnd) || (sendbuf_size < rwnd && rwnd < MSS))
+                  && (n+sendbuf_size < GBN)
+                  ){
+                  ret_p = Packet((*cs).state.SendBuffer.Extract(n, sendbuf_size));
+                  (*cs).state.SetLastSent((*cs).state.GetLastSent() + sendbuf_size);
+                  n = n + sendbuf_size;
+                  MakePacket(ret_p, *cs, SEND_ACK, sendbuf_size);              
+                }
+                //rwnd < mss < sendbuf
+                //rwnd < sendbuf < mss
+                else if (n+rwnd < GBN) {
+                  ret_p = Packet((*cs).state.SendBuffer.Extract(n, rwnd));
+                  (*cs).state.SetLastSent((*cs).state.GetLastSent() + rwnd);
+                  n = n + rwnd;
+                  MakePacket(ret_p, *cs, SEND_ACK, rwnd);
+                }
+
+                MinetSend(mux, ret_p);
+
+
+                  (*cs).bTmrActive = true;
+                  (*cs).timeout = Time()+RTT;
+                
+
+              }//while
+            
+              //update N
+              (*cs).state.N = n;            
+            }//send data
+
+          }//else
+        }//established
         break;
 
       case CLOSE_WAIT:
@@ -523,7 +585,7 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
 
             /* NOW SEND STUFF FROM THE BUFFER */
             //we'll send N packets worth and have establish send the rest
-            //right now just one packet
+            //GOBACKN
             //if sendbuffer contents is less than mss, send everything
             unsigned int n = (*cs).state.N;
             int rwnd = (*cs).state.GetRwnd();
@@ -567,6 +629,10 @@ void SockHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
               }
 
               MinetSend(mux, ret_p);
+
+                (*cs).bTmrActive = true;
+                (*cs).timeout = Time()+RTT;
+              
             }//while
           
             //update N
@@ -699,6 +765,98 @@ void TimeHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList
       if((*cs).state.ExpireTimerTries()){
         //close the connection
         //does this mean setting it to close?
+      }
+      else{
+        switch((*cs).state.GetState()){
+          case SYN_RCVD: {
+            cout << "Timeout, resend SYNACK." << endl;
+            Packet ret_p;
+            MakePacket(ret_p, *cs, SEND_SYNACK, 0);
+            MinetSend(mux, ret_p);
+            (*cs).timeout = Time()+RTT;
+            break;
+          }
+
+          case SYN_SENT: {
+            cout << "Timeout, resend SYN." << endl;
+            Packet ret_p;
+            MakePacket(ret_p, *cs, SEND_SYN, 0);
+            MinetSend(mux, ret_p);
+            (*cs).timeout = Time()+RTT;
+            break;
+          }
+
+          case ESTABLISHED: {
+            //go back n resend
+            if((*cs).state.N > 0){
+              cout << "Timeout, resend data." << endl;
+              /* NOW SEND STUFF FROM THE BUFFER */
+              //we'll send N packets worth and have establish send the rest
+              //right now just one packet
+              //if sendbuffer contents is less than mss, send everything
+              unsigned int n = 0;
+              int rwnd = (*cs).state.GetRwnd();
+              size_t sendbuf_size = (*cs).state.SendBuffer.GetSize();
+              while( n < (*cs).state.N) {
+                Packet ret_p;
+
+                //account for increment
+                rwnd = rwnd - n;
+                sendbuf_size = sendbuf_size - n;
+
+                //six cases on what the segment size should be
+                //mss < rwnd < semd
+                //mss < send < rwmd
+                if(
+                  ((MSS < rwnd && rwnd << sendbuf_size) || (MSS < sendbuf_size && sendbuf_size < rwnd))
+                  && (n + MSS < GBN)
+                  ){
+                  ret_p = Packet((*cs).state.SendBuffer.Extract(n, MSS));
+                  (*cs).state.SetLastSent((*cs).state.GetLastSent() + MSS);
+                  n = n + MSS;
+                  MakePacket(ret_p, *cs, SEND_ACK, MSS);
+                }
+                //send < mss < rwnd
+                //send < rwnd < mss
+                else if(
+                  ((sendbuf_size < MSS && MSS << rwnd) || (sendbuf_size < rwnd && rwnd < MSS))
+                  && (n+sendbuf_size < GBN)
+                  ){
+                  ret_p = Packet((*cs).state.SendBuffer.Extract(n, sendbuf_size));
+                  (*cs).state.SetLastSent((*cs).state.GetLastSent() + sendbuf_size);
+                  n = n + sendbuf_size;
+                  MakePacket(ret_p, *cs, SEND_ACK, sendbuf_size);              
+                }
+                //rwnd < mss < sendbuf
+                //rwnd < sendbuf < mss
+                else if (n+rwnd < GBN) {
+                  ret_p = Packet((*cs).state.SendBuffer.Extract(n, rwnd));
+                  (*cs).state.SetLastSent((*cs).state.GetLastSent() + rwnd);
+                  n = n + rwnd;
+                  MakePacket(ret_p, *cs, SEND_ACK, rwnd);
+                }
+
+                MinetSend(mux, ret_p);
+
+
+                  (*cs).bTmrActive = true;
+                  (*cs).timeout = Time()+RTT;
+                
+
+              }//while
+         
+            }//send data
+            else{
+              //resend ack
+              cout << "Timeout, resend ack." << endl;
+              Packet ret_p;
+              MakePacket(ret_p, *cs, SEND_ACK, 0);
+              MinetSend(mux, ret_p);
+              (*cs).timeout = Time()+RTT;
+            }
+          }
+
+        }//switch
       }
 
 
