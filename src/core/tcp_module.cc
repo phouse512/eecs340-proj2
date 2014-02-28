@@ -394,34 +394,108 @@ void MuxHandler(const MinetHandle &mux, const MinetHandle &sock, ConnectionList<
         break;
 
       case CLOSE_WAIT:
+        //done as far as I know
         cout << "Current state: CLOSE_WAIT" << endl;
         //no payload
         (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);        
         (*cs).state.SetState(LAST_ACK);
-        (*cs).state.SetLastRecvd(seqnum);
+        
+        (*cs).timeout = Time()+RTT;
+        (*cs).bTmrActive = true;
+        (*cs).state.SetTimerTries(TIMERTRIES);
 
         MakePacket(ret_p, *cs, SEND_FIN, 0);
         MinetSend(mux, ret_p);
+
+        response.type = WRITE;
+        response.connection = c;
+        response.error = EOK;
+        response.bytes = 0;
+        MinetSend(sock, response);
         break;
 
       case FIN_WAIT1:
+
+        //dunzo for now
         cout << "Current state: FIN_WAIT1" << endl;
 
+        //if we receive an ACK of FIN
+        if (IS_ACK(flags)){
+          // doesn't need any packet sending data
+          (*cs).state.SetState(FIN_WAIT2);
+          (*cs).SetLastAcked(acknum);
+          (*cs).SetLastRecvd(seqnum);
+        } else if (IS_FIN(flags)){
+          (*cs).state.SetState(CLOSING);
+          
+          (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);
+          (*cs).state.SetLastRecvd(seqnum, data_len);
+
+          (*cs).timeout = Time()+RTT;
+          (*cs).bTmrActive = true;
+          (*cs).state.SetTimerTries(TIMERTRIES);
+
+          MakePacket(ret_p, *cs, SEND_ACK, 0);
+          MinetSend(mux, ret_p);
+
+          response.type = WRITE;
+          response.connectoin = c;
+          response.error = EOK;
+          resonse.bytes = 0;
+          MinetSend(sock, response);
+        }
         break;
 
       case CLOSING:
         cout << "Current state: CLOSING" << endl;
-
+        //done - doesn't send any packets therefore doesn't need additional stuff
+        if (IS_ACK(flags))
+        {
+          (*cs).state.SetState(TIME_WAIT);
+          (*cs).state.SetLastAcked(acknum);
+          (*cs).state.SetLastRecvd(seqnum);
+        }
         break;
 
       case LAST_ACK:
-            //HOW DOES IT GET HERE
+        //HOW DOES IT GET HERE
         cout << "Current state: LAST_ACK" << endl;
 
+        // no packet is sent, moved directly to closed
+        if (IS_ACK(flags))
+        {
+          (*cs).state.SetState(CLOSED);
+          (*cs).state.SetLastAcked(acknum);
+          (*cs).state.SetLastRecvd(seqnum);
+          
+        }   
         break;
 
       case FIN_WAIT2:
         cout << "Current state: FIN_WAIT2" << endl;
+        if (IS_FIN(flags))
+        {
+          //set state
+          (*cs).state.SetState(TIME_WAIT);
+
+          (*cs).state.SetLastAcked(acknum-1);
+          (*cs).state.SetLastSent((*cs).state.GetLastSent()+1);
+          (*cs).state.SetLastRecvd(seqnum, data_len);
+
+          (*cs).timeout = Time()+RTT;
+          (*cs).bTmrActive = true;
+          (*cs).state.SetTimerTries(TIMERTRIES);
+
+
+          MakePacket(ret_p, *cs, SEND_ACK, 0);
+          MinetSend(mux, ret_p);
+
+          response.type = WRITE;
+          response.connection = c;
+          response.error = EOK;
+          response.bytes = 0;
+          MinetSend(sock, response);
+        }
 
         break;
 
